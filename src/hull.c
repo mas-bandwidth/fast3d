@@ -7,6 +7,11 @@
 #include "hull_map.h"
 #include "math_internal.h"
 #include "shape.h"
+#include "simd.h"
+
+#if defined( B3_SIMD_NEON )
+#include <arm_neon.h>
+#endif
 
 #include "box3d/collision.h"
 #include "box3d/constants.h"
@@ -1615,6 +1620,57 @@ int b3FindHullSupportVertex( const b3HullData* hull, b3Vec3 direction )
 	int vertexCount = hull->vertexCount;
 	const b3Vec3* points = b3GetHullPoints( hull );
 
+#if defined( B3_SIMD_NEON )
+	// Test four vertices per iteration. vld3q de-interleaves the packed
+	// b3Vec3 array into x, y and z lanes. Ties may resolve to a different
+	// vertex than the scalar loop, which is an equally valid support point.
+	int count4 = vertexCount & ~3;
+	if ( count4 > 0 )
+	{
+		float32x4_t dx = vdupq_n_f32( direction.x );
+		float32x4_t dy = vdupq_n_f32( direction.y );
+		float32x4_t dz = vdupq_n_f32( direction.z );
+
+		float32x4_t bestDotV = vdupq_n_f32( -FLT_MAX );
+		uint32x4_t bestIndexV = vdupq_n_u32( 0 );
+		uint32x4_t indexV = { 0, 1, 2, 3 };
+		uint32x4_t fourV = vdupq_n_u32( 4 );
+
+		for ( int index = 0; index < count4; index += 4 )
+		{
+			float32x4x3_t p = vld3q_f32( (const float*)( points + index ) );
+			float32x4_t dot = vfmaq_f32( vfmaq_f32( vmulq_f32( dx, p.val[0] ), dy, p.val[1] ), dz, p.val[2] );
+			uint32x4_t greater = vcgtq_f32( dot, bestDotV );
+			bestDotV = vbslq_f32( greater, dot, bestDotV );
+			bestIndexV = vbslq_u32( greater, indexV, bestIndexV );
+			indexV = vaddq_u32( indexV, fourV );
+		}
+
+		float dots[4];
+		uint32_t indices[4];
+		vst1q_f32( dots, bestDotV );
+		vst1q_u32( indices, bestIndexV );
+
+		for ( int lane = 0; lane < 4; ++lane )
+		{
+			if ( dots[lane] > bestDot )
+			{
+				bestDot = dots[lane];
+				bestIndex = (int)indices[lane];
+			}
+		}
+	}
+
+	for ( int index = count4; index < vertexCount; ++index )
+	{
+		float dot = b3Dot( direction, points[index] );
+		if ( dot > bestDot )
+		{
+			bestIndex = index;
+			bestDot = dot;
+		}
+	}
+#else
 	for ( int index = 0; index < vertexCount; ++index )
 	{
 		float dot = b3Dot( direction, points[index] );
@@ -1624,6 +1680,7 @@ int b3FindHullSupportVertex( const b3HullData* hull, b3Vec3 direction )
 			bestDot = dot;
 		}
 	}
+#endif
 	B3_ASSERT( bestIndex >= 0 );
 
 	return bestIndex;
