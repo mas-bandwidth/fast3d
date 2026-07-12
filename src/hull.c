@@ -1633,7 +1633,8 @@ int b3FindHullSupportVertex( const b3HullData* hull, b3Vec3 direction )
 
 		float32x4_t bestDotV = vdupq_n_f32( -FLT_MAX );
 		uint32x4_t bestIndexV = vdupq_n_u32( 0 );
-		uint32x4_t indexV = { 0, 1, 2, 3 };
+		const uint32_t laneInit[4] = { 0, 1, 2, 3 };
+		uint32x4_t indexV = vld1q_u32( laneInit );
 		uint32x4_t fourV = vdupq_n_u32( 4 );
 
 		for ( int index = 0; index < count4; index += 4 )
