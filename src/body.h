@@ -172,6 +172,10 @@ typedef struct b3BodyState
 	// b3BodyFlags
 	// Important flags: locking, dynamic
 	uint32_t flags; // 4
+
+	// Pad to 64 bytes so a body state never straddles two cache lines
+	// in the solver gather/scatter
+	uint32_t padding[2]; // 8
 } b3BodyState;
 
 // Identity body state, notice the deltaRotation is identity
