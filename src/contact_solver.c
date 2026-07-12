@@ -1406,34 +1406,65 @@ typedef struct b3BodyStateW
 
 #if defined( B3_SIMD_SSE2 ) || defined( B3_SIMD_NEON )
 
+// Transpose a 4x4 matrix of wide floats in place
+#if defined( B3_SIMD_NEON )
+static inline void b3Transpose4W( b3FloatW* r0, b3FloatW* r1, b3FloatW* r2, b3FloatW* r3 )
+{
+	float32x4x2_t t01 = vtrnq_f32( *r0, *r1 );
+	float32x4x2_t t23 = vtrnq_f32( *r2, *r3 );
+	*r0 = vcombine_f32( vget_low_f32( t01.val[0] ), vget_low_f32( t23.val[0] ) );
+	*r1 = vcombine_f32( vget_low_f32( t01.val[1] ), vget_low_f32( t23.val[1] ) );
+	*r2 = vcombine_f32( vget_high_f32( t01.val[0] ), vget_high_f32( t23.val[0] ) );
+	*r3 = vcombine_f32( vget_high_f32( t01.val[1] ), vget_high_f32( t23.val[1] ) );
+}
+
+static inline b3FloatW b3LoadFloatsW( const float* p )
+{
+	return vld1q_f32( p );
+}
+#else
+static inline void b3Transpose4W( b3FloatW* r0, b3FloatW* r1, b3FloatW* r2, b3FloatW* r3 )
+{
+	_MM_TRANSPOSE4_PS( *r0, *r1, *r2, *r3 );
+}
+
+static inline b3FloatW b3LoadFloatsW( const float* p )
+{
+	return _mm_loadu_ps( p );
+}
+#endif
+
 static b3BodyStateW b3GatherBodies( const b3BodyState* states, int* indices )
 {
-	b3BodyState dummy = { 0 };
-	dummy.deltaRotation.s = 1.0f;
-
-	// Indices are 0 for null
-	b3BodyState b1 = indices[0] == 0 ? dummy : states[indices[0] - 1];
-	b3BodyState b2 = indices[1] == 0 ? dummy : states[indices[1] - 1];
-	b3BodyState b3 = indices[2] == 0 ? dummy : states[indices[2] - 1];
-	b3BodyState b4 = indices[3] == 0 ? dummy : states[indices[3] - 1];
+	// Gather four body states with vector loads and 4x4 transposes instead of
+	// copying the structs and inserting one lane at a time.
+	// b3BodyState is 13 floats followed by flags, so the loads below stay in bounds.
+	// Indices are 0 for null.
+	const float* p0 = (const float*)( indices[0] == 0 ? &b3_identityBodyState : states + ( indices[0] - 1 ) );
+	const float* p1 = (const float*)( indices[1] == 0 ? &b3_identityBodyState : states + ( indices[1] - 1 ) );
+	const float* p2 = (const float*)( indices[2] == 0 ? &b3_identityBodyState : states + ( indices[2] - 1 ) );
+	const float* p3 = (const float*)( indices[3] == 0 ? &b3_identityBodyState : states + ( indices[3] - 1 ) );
 
 	b3BodyStateW s;
-	s.v.X = b3SetW( b1.linearVelocity.x, b2.linearVelocity.x, b3.linearVelocity.x, b4.linearVelocity.x );
-	s.v.Y = b3SetW( b1.linearVelocity.y, b2.linearVelocity.y, b3.linearVelocity.y, b4.linearVelocity.y );
-	s.v.Z = b3SetW( b1.linearVelocity.z, b2.linearVelocity.z, b3.linearVelocity.z, b4.linearVelocity.z );
 
-	s.w.X = b3SetW( b1.angularVelocity.x, b2.angularVelocity.x, b3.angularVelocity.x, b4.angularVelocity.x );
-	s.w.Y = b3SetW( b1.angularVelocity.y, b2.angularVelocity.y, b3.angularVelocity.y, b4.angularVelocity.y );
-	s.w.Z = b3SetW( b1.angularVelocity.z, b2.angularVelocity.z, b3.angularVelocity.z, b4.angularVelocity.z );
+	// floats 0-3: linearVelocity.xyz, angularVelocity.x
+	b3FloatW r0 = b3LoadFloatsW( p0 ), r1 = b3LoadFloatsW( p1 ), r2 = b3LoadFloatsW( p2 ), r3 = b3LoadFloatsW( p3 );
+	b3Transpose4W( &r0, &r1, &r2, &r3 );
+	s.v.X = r0, s.v.Y = r1, s.v.Z = r2, s.w.X = r3;
 
-	s.dp.X = b3SetW( b1.deltaPosition.x, b2.deltaPosition.x, b3.deltaPosition.x, b4.deltaPosition.x );
-	s.dp.Y = b3SetW( b1.deltaPosition.y, b2.deltaPosition.y, b3.deltaPosition.y, b4.deltaPosition.y );
-	s.dp.Z = b3SetW( b1.deltaPosition.z, b2.deltaPosition.z, b3.deltaPosition.z, b4.deltaPosition.z );
+	// floats 4-7: angularVelocity.yz, deltaPosition.xy
+	r0 = b3LoadFloatsW( p0 + 4 ), r1 = b3LoadFloatsW( p1 + 4 ), r2 = b3LoadFloatsW( p2 + 4 ), r3 = b3LoadFloatsW( p3 + 4 );
+	b3Transpose4W( &r0, &r1, &r2, &r3 );
+	s.w.Y = r0, s.w.Z = r1, s.dp.X = r2, s.dp.Y = r3;
 
-	s.dq.V.X = b3SetW( b1.deltaRotation.v.x, b2.deltaRotation.v.x, b3.deltaRotation.v.x, b4.deltaRotation.v.x );
-	s.dq.V.Y = b3SetW( b1.deltaRotation.v.y, b2.deltaRotation.v.y, b3.deltaRotation.v.y, b4.deltaRotation.v.y );
-	s.dq.V.Z = b3SetW( b1.deltaRotation.v.z, b2.deltaRotation.v.z, b3.deltaRotation.v.z, b4.deltaRotation.v.z );
-	s.dq.S = b3SetW( b1.deltaRotation.s, b2.deltaRotation.s, b3.deltaRotation.s, b4.deltaRotation.s );
+	// floats 8-11: deltaPosition.z, deltaRotation.v.xyz
+	r0 = b3LoadFloatsW( p0 + 8 ), r1 = b3LoadFloatsW( p1 + 8 ), r2 = b3LoadFloatsW( p2 + 8 ), r3 = b3LoadFloatsW( p3 + 8 );
+	b3Transpose4W( &r0, &r1, &r2, &r3 );
+	s.dp.Z = r0, s.dq.V.X = r1, s.dq.V.Y = r2, s.dq.V.Z = r3;
+
+	// float 12: deltaRotation.s
+	s.dq.S = b3SetW( p0[12], p1[12], p2[12], p3[12] );
+
 	return s;
 }
 
