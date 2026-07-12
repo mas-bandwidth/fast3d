@@ -4,6 +4,11 @@
 #include "algorithm.h"
 #include "manifold.h"
 #include "shape.h"
+#include "simd.h"
+
+#if defined( B3_SIMD_NEON )
+#include <arm_neon.h>
+#endif
 
 #include "box3d/base.h"
 #include "box3d/collision.h"
@@ -234,6 +239,221 @@ static b3EdgeQuery b3QueryEdgeDirectionHullAndCapsule( const b3HullData* hull, c
 	};
 }
 
+#if defined( B3_SIMD_NEON ) || defined( B3_SIMD_SSE2 )
+
+// Half-edge indices are 8 bits, so a hull has at most 256 half-edges and 128 edge pairs.
+#define B3_MAX_EDGE_PAIRS 128
+
+static b3EdgeQuery b3QueryEdgeDirections( const b3HullData* hullA, const b3HullData* hullB, b3Transform transformBtoA )
+{
+	// Find axis of minimum penetration
+	b3Vec3 maxNormal = b3Vec3_zero;
+	float maxSeparation = -FLT_MAX;
+	int maxIndexA = B3_NULL_INDEX;
+	int maxIndexB = B3_NULL_INDEX;
+
+	const b3HullHalfEdge* edgesA = b3GetHullEdges( hullA );
+	const b3Vec3* pointsA = b3GetHullPoints( hullA );
+	const b3Plane* planesA = b3GetHullPlanes( hullA );
+	const b3HullHalfEdge* edgesB = b3GetHullEdges( hullB );
+	const b3Vec3* pointsB = b3GetHullPoints( hullB );
+	const b3Plane* planesB = b3GetHullPlanes( hullB );
+
+	// Work in frame A
+	b3Matrix3 matrix = b3MakeMatrixFromQuat( transformBtoA.q );
+
+	float squaredTolerance = 0.005f * 0.005f;
+
+	// Scatter the edge pairs of hull A into structure-of-arrays form so the Gauss map
+	// test can reject four edge pairs per iteration. The padding lanes are zero, which
+	// always fails the strict sign tests below.
+	int pairCountA = hullA->edgeCount / 2;
+	B3_ASSERT( pairCountA <= B3_MAX_EDGE_PAIRS );
+
+	float eAx[B3_MAX_EDGE_PAIRS], eAy[B3_MAX_EDGE_PAIRS], eAz[B3_MAX_EDGE_PAIRS];
+	float uAx[B3_MAX_EDGE_PAIRS], uAy[B3_MAX_EDGE_PAIRS], uAz[B3_MAX_EDGE_PAIRS];
+	float vAx[B3_MAX_EDGE_PAIRS], vAy[B3_MAX_EDGE_PAIRS], vAz[B3_MAX_EDGE_PAIRS];
+
+	int paddedCountA = ( pairCountA + 3 ) & ~3;
+	for ( int i = pairCountA; i < paddedCountA; ++i )
+	{
+		eAx[i] = eAy[i] = eAz[i] = 0.0f;
+		uAx[i] = uAy[i] = uAz[i] = 0.0f;
+		vAx[i] = vAy[i] = vAz[i] = 0.0f;
+	}
+
+	for ( int i = 0; i < pairCountA; ++i )
+	{
+		const b3HullHalfEdge* edgeA = edgesA + 2 * i;
+		const b3HullHalfEdge* twinA = edgesA + 2 * i + 1;
+		B3_ASSERT( edgeA->twin == 2 * i + 1 && twinA->twin == 2 * i );
+
+		b3Vec3 eA = b3Sub( pointsA[twinA->origin], pointsA[edgeA->origin] );
+		b3Vec3 uA = planesA[edgeA->face].normal;
+		b3Vec3 vA = planesA[twinA->face].normal;
+
+		eAx[i] = eA.x, eAy[i] = eA.y, eAz[i] = eA.z;
+		uAx[i] = uA.x, uAy[i] = uA.y, uAz[i] = uA.z;
+		vAx[i] = vA.x, vAy[i] = vA.y, vAz[i] = vA.z;
+	}
+
+	// Arranged to minimize transform operations
+	for ( int indexB = 0; indexB < hullB->edgeCount; indexB += 2 )
+	{
+		const b3HullHalfEdge* edgeB = edgesB + indexB;
+		const b3HullHalfEdge* twinB = edgesB + indexB + 1;
+		B3_ASSERT( edgeB->twin == indexB + 1 && twinB->twin == indexB );
+
+		b3Vec3 qB = pointsB[twinB->origin];
+		b3Vec3 eB = b3MulMV( matrix, b3Sub( qB, pointsB[edgeB->origin] ) );
+		qB = b3Add( b3MulMV( matrix, qB ), transformBtoA.p );
+
+		b3Vec3 uB = b3MulMV( matrix, planesB[edgeB->face].normal );
+		b3Vec3 vB = b3MulMV( matrix, planesB[twinB->face].normal );
+
+#if defined( B3_SIMD_NEON )
+		float32x4_t uBxV = vdupq_n_f32( uB.x ), uByV = vdupq_n_f32( uB.y ), uBzV = vdupq_n_f32( uB.z );
+		float32x4_t vBxV = vdupq_n_f32( vB.x ), vByV = vdupq_n_f32( vB.y ), vBzV = vdupq_n_f32( vB.z );
+		float32x4_t eBxV = vdupq_n_f32( eB.x ), eByV = vdupq_n_f32( eB.y ), eBzV = vdupq_n_f32( eB.z );
+#else
+		__m128 uBxV = _mm_set1_ps( uB.x ), uByV = _mm_set1_ps( uB.y ), uBzV = _mm_set1_ps( uB.z );
+		__m128 vBxV = _mm_set1_ps( vB.x ), vByV = _mm_set1_ps( vB.y ), vBzV = _mm_set1_ps( vB.z );
+		__m128 eBxV = _mm_set1_ps( eB.x ), eByV = _mm_set1_ps( eB.y ), eBzV = _mm_set1_ps( eB.z );
+		__m128 zeroV = _mm_setzero_ps();
+#endif
+
+		for ( int i = 0; i < paddedCountA; i += 4 )
+		{
+			// See "Collision Detection of Convex Polyhedra Based on Duality Transformation"
+			// Two edges build a face on the Minkowski sum if the associated arcs AB and CD intersect on the Gauss map.
+			// The associated arcs are defined by the adjacent face normals of each edge.
+
+			// These are signed volumes with an edge optimization to avoid cross products
+			// eA parallel to cross(vA, uA)
+			// eB parallel to cross(vB, uB)
+			// Since only signs are tested, length doesn't matter.
+
+			// cba = dot(uB, eA), dba = dot(vB, eA), adc = -dot(uA, eB), bdc = -dot(vA, eB)
+#if defined( B3_SIMD_NEON )
+			float32x4_t ex = vld1q_f32( eAx + i ), ey = vld1q_f32( eAy + i ), ez = vld1q_f32( eAz + i );
+			float32x4_t cba = vfmaq_f32( vfmaq_f32( vmulq_f32( uBxV, ex ), uByV, ey ), uBzV, ez );
+			float32x4_t dba = vfmaq_f32( vfmaq_f32( vmulq_f32( vBxV, ex ), vByV, ey ), vBzV, ez );
+
+			float32x4_t ux = vld1q_f32( uAx + i ), uy = vld1q_f32( uAy + i ), uz = vld1q_f32( uAz + i );
+			float32x4_t vx = vld1q_f32( vAx + i ), vy = vld1q_f32( vAy + i ), vz = vld1q_f32( vAz + i );
+			float32x4_t adc = vnegq_f32( vfmaq_f32( vfmaq_f32( vmulq_f32( ux, eBxV ), uy, eByV ), uz, eBzV ) );
+			float32x4_t bdc = vnegq_f32( vfmaq_f32( vfmaq_f32( vmulq_f32( vx, eBxV ), vy, eByV ), vz, eBzV ) );
+
+			uint32x4_t hit = vandq_u32( vandq_u32( vcltzq_f32( vmulq_f32( cba, dba ) ), vcltzq_f32( vmulq_f32( adc, bdc ) ) ),
+										vcgtzq_f32( vmulq_f32( cba, bdc ) ) );
+
+			if ( vmaxvq_u32( hit ) == 0 )
+			{
+				continue;
+			}
+
+			uint32_t hitLanes[4];
+			vst1q_u32( hitLanes, hit );
+#else
+			__m128 ex = _mm_loadu_ps( eAx + i ), ey = _mm_loadu_ps( eAy + i ), ez = _mm_loadu_ps( eAz + i );
+			__m128 cba = _mm_add_ps( _mm_add_ps( _mm_mul_ps( uBxV, ex ), _mm_mul_ps( uByV, ey ) ), _mm_mul_ps( uBzV, ez ) );
+			__m128 dba = _mm_add_ps( _mm_add_ps( _mm_mul_ps( vBxV, ex ), _mm_mul_ps( vByV, ey ) ), _mm_mul_ps( vBzV, ez ) );
+
+			__m128 ux = _mm_loadu_ps( uAx + i ), uy = _mm_loadu_ps( uAy + i ), uz = _mm_loadu_ps( uAz + i );
+			__m128 vx = _mm_loadu_ps( vAx + i ), vy = _mm_loadu_ps( vAy + i ), vz = _mm_loadu_ps( vAz + i );
+			__m128 adc = _mm_sub_ps(
+				zeroV, _mm_add_ps( _mm_add_ps( _mm_mul_ps( ux, eBxV ), _mm_mul_ps( uy, eByV ) ), _mm_mul_ps( uz, eBzV ) ) );
+			__m128 bdc = _mm_sub_ps(
+				zeroV, _mm_add_ps( _mm_add_ps( _mm_mul_ps( vx, eBxV ), _mm_mul_ps( vy, eByV ) ), _mm_mul_ps( vz, eBzV ) ) );
+
+			int hitMask = _mm_movemask_ps( _mm_and_ps( _mm_and_ps( _mm_cmplt_ps( _mm_mul_ps( cba, dba ), zeroV ),
+																   _mm_cmplt_ps( _mm_mul_ps( adc, bdc ), zeroV ) ),
+													   _mm_cmpgt_ps( _mm_mul_ps( cba, bdc ), zeroV ) ) );
+
+			if ( hitMask == 0 )
+			{
+				continue;
+			}
+#endif
+
+			for ( int lane = 0; lane < 4; ++lane )
+			{
+#if defined( B3_SIMD_NEON )
+				if ( hitLanes[lane] == 0 )
+#else
+				if ( ( hitMask & ( 1 << lane ) ) == 0 )
+#endif
+				{
+					continue;
+				}
+
+				// Candidate found. Redo the test in scalar math to match the scalar version exactly,
+				// then refine. This path is rare, the wide test above rejects nearly all edge pairs.
+				int indexA = 2 * ( i + lane );
+
+				const b3HullHalfEdge* edgeA = edgesA + indexA;
+				const b3HullHalfEdge* twinA = edgesA + indexA + 1;
+
+				b3Vec3 qA = pointsA[twinA->origin];
+				b3Vec3 eA = b3Sub( qA, pointsA[edgeA->origin] );
+
+				float cbaS = b3Dot( uB, eA );
+				float dbaS = b3Dot( vB, eA );
+				float adcS = -b3Dot( planesA[edgeA->face].normal, eB );
+				float bdcS = -b3Dot( planesA[twinA->face].normal, eB );
+
+				if ( cbaS * dbaS < 0.0f && adcS * bdcS < 0.0f && cbaS * bdcS > 0.0f )
+				{
+					// Avoid nearly parallel edges that may lead to invalid separation values at the noise floor.
+					if ( b3MaxFloat( cbaS * cbaS, dbaS * dbaS ) < squaredTolerance * b3LengthSquared( eA ) )
+					{
+						continue;
+					}
+
+					// The intersection of the arcs on the Gauss map is the edge pair axis. Cast the
+					// arc of hull B (from uB to vB) against the plane containing the arc of hull A:
+					// dot(uB + t * (vB - uB), eA) == 0
+					// then
+					// t = cba / (cba - dba)
+					//
+					// The signs of cba and dba differ (Minkowski test), so the division is safe.
+					//
+					// The axis generated points from B to A by construction since it lands between
+					// two face normals on B. This removes the need to orient the separation axis
+					// using the hull centers.
+					//
+					// The axis is perpendicular to both edges so I can use qA and qB as arbitrary
+					// points on edgeA and edgeB to measure the separation.
+					float t = cbaS / ( cbaS - dbaS );
+					b3Vec3 axis = b3Lerp( uB, vB, t );
+					B3_VALIDATE( b3LengthSquared( axis ) > 1000.0f * FLT_MIN );
+					axis = b3Normalize( axis );
+					float separation = b3Dot( axis, b3Sub( qA, qB ) );
+
+					if ( separation > maxSeparation )
+					{
+						// Continues to find the maximum separating axis
+						// Flip normal so it points from A to B
+						maxNormal = b3Neg( axis );
+						maxSeparation = separation;
+						maxIndexA = indexA;
+						maxIndexB = indexB;
+					}
+				}
+			}
+		}
+	}
+
+	return (b3EdgeQuery){
+		.normal = maxNormal,
+		.separation = maxSeparation,
+		.indexA = maxIndexA,
+		.indexB = maxIndexB,
+	};
+}
+
+#else
+
 static b3EdgeQuery b3QueryEdgeDirections( const b3HullData* hullA, const b3HullData* hullB, b3Transform transformBtoA )
 {
 	// Find axis of minimum penetration
@@ -341,6 +561,8 @@ static b3EdgeQuery b3QueryEdgeDirections( const b3HullData* hullA, const b3HullD
 		.indexB = maxIndexB,
 	};
 }
+
+#endif
 
 // Reduce the manifold points to a maximum of 4 points.
 // Note: this modifies the input point array to improve performance

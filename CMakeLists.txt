@@ -73,10 +73,16 @@ if (MSVC OR APPLE OR UNIX)
 	endif()
 endif()
 
-# Deterministic math
+# Box3D uses -ffp-contract=off for cross platform determinism.
 # https://box2d.org/posts/2024/08/determinism/
+# fast3d trades cross platform determinism for fused multiply-add.
+option(BOX3D_GO_FAST "Trade cross platform determinism for speed" ON)
 if (MINGW OR APPLE OR UNIX)
-	add_compile_options(-ffp-contract=off)
+	if (BOX3D_GO_FAST)
+		add_compile_options(-ffp-contract=fast)
+	else()
+		add_compile_options(-ffp-contract=off)
+	endif()
 endif()
 
 option(BOX3D_DISABLE_SIMD "Disable SIMD math (slower)" OFF)
