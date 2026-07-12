@@ -36,46 +36,73 @@ It turns out it goes faster.
 
 ## Benchmarks
 
-The benchmark suite that ships with Box3D: 8 workers, minimum of 4 runs, stock Box3D
-built with its default release settings, fast3d built with its default release settings.
-Benchmarks interleaved per scene so neither side gets the warm half of the machine.
+The benchmark suite that ships with Box3D. Stock Box3D and fast3d are each built with
+their default release settings and interleaved per scene so neither side gets the warm
+half of the machine. M3 Ultra: 8 workers, minimum of 4 runs. EPYC: 1 worker, minimum
+of 2 runs.
 
 ### Apple M3 Ultra (NEON), 8 workers
 
 | benchmark | Box3D (ms) | fast3d (ms) | speedup |
 | --- | ---: | ---: | ---: |
-| convex_pile | 8976 | 3181 | **2.82x** |
-| junkyard | 3590 | 2944 | 1.22x |
-| many_pyramids | 325 | 277 | 1.17x |
-| washer | 5720 | 5049 | 1.13x |
-| large_pyramid | 368 | 326 | 1.13x |
-| joint_grid | 166 | 153 | 1.08x |
-| trees100 | 97 | 90 | 1.07x |
-| trees50 | 113 | 105 | 1.07x |
-| trees25 | 191 | 180 | 1.06x |
-| rain | 440 | 423 | 1.04x |
-| large_world | 19 | 20 | wash* |
+| convex_pile | 7657 | 2576 | **2.97x** |
+| junkyard | 2925 | 2245 | 1.30x |
+| trees50 | 111 | 98 | 1.14x |
+| large_pyramid | 348 | 307 | 1.13x |
+| many_pyramids | 308 | 271 | 1.13x |
+| joint_grid | 163 | 147 | 1.11x |
+| washer | 4239 | 3854 | 1.10x |
+| trees25 | 183 | 173 | 1.06x |
+| rain | 413 | 396 | 1.04x |
+| trees100 | 88 | 85 | 1.03x |
+| large_world | 20 | 21 | wash* |
 
 *large_world runs in ~20 ms and flips winner run to run.
 
 ### AMD EPYC 9124 (SSE2), 1 worker
 
+The OS on this machine is confined to a single core (the rest belong to game servers),
+so this is the single threaded comparison.
+
 | benchmark | Box3D (ms) | fast3d (ms) | speedup |
 | --- | ---: | ---: | ---: |
-| convex_pile | 63232 | 27678 | **2.28x** |
-| junkyard | 32529 | 29162 | 1.12x |
-| large_pyramid | 3510 | 3342 | 1.05x |
-| washer | 42754 | 41230 | 1.04x |
-| many_pyramids | 4150 | 4027 | 1.03x |
-| rain | 2992 | 2998 | 1.00x |
-| joint_grid | 1845 | 1891 | 0.98x |
-| trees100 | 276 | 304 | 0.91x* |
-| trees50 | 436 | 445 | 0.98x |
-| trees25 | 1019 | 1060 | 0.96x |
-| large_world | 13 | 11 | wash |
+| convex_pile | 62947 | 25326 | **2.49x** |
+| junkyard | 32650 | 27476 | 1.19x |
+| trees25 | 1035 | 893 | 1.16x |
+| trees50 | 463 | 406 | 1.14x |
+| washer | 42506 | 40904 | 1.04x |
+| trees100 | 272 | 266 | 1.02x |
+| many_pyramids | 4366 | 4324 | 1.01x |
+| large_pyramid | 3423 | 3432 | 1.00x |
+| joint_grid | 1821 | 1857 | 0.98x |
+| rain | 3102 | 3162 | 0.98x |
+| large_world | 11 | 11 | wash |
 
-*Re-measured three times interleaved: 269 vs 273 ms, about 1.5% slower. The mesh-heavy
-trees scenes lose a couple percent on x86-64 and I will be taking no further questions.
+joint_grid and rain give back about 2% on x86-64. The joint solver does not touch any
+of the SIMD kernels and the baseline x86-64 target has no FMA for `-ffp-contract=fast`
+to use, so on this machine those scenes are mostly measuring link time optimization
+moving code around. You get a 2.5x convex pile, Erin gets 2% of a joint grid. Fair trade.
+
+### Where the time goes
+
+`sample` profiles of `convex_pile` on the M3 Ultra, top of stack, worker idle time
+excluded. Box3D spends roughly 78% of its compute in the SAT edge query. fast3d still
+has the same function on top, but it is down to roughly 48% of a run that is three
+times shorter.
+
+| Box3D (7.7 s/run) | samples | | fast3d (2.6 s/run) | samples |
+| --- | ---: | --- | --- | ---: |
+| b3QueryEdgeDirections | 11135 | | b3QueryEdgeDirections | 7239 |
+| b3FindHullSupportVertex | 1487 | | b3DynamicTree_Query | 2584 |
+| b3DynamicTree_Query | 991 | | b3QueryFaceDirections* | 2187 |
+| b3QueryFaceDirections | 270 | | b3SolveContacts_Convex | 774 |
+| b3UpdateConvexContact | 223 | | b3CollideHulls | 760 |
+
+*LTO inlined the support vertex scan into the face query, so its time reports there.
+
+The two profiles cover the same 5 second window, but a fast3d run is 3x shorter, so
+equal sample counts mean fast3d is doing that work 3x faster. Per run, the edge query
+costs about 4.5x less than in Box3D.
 
 ## What did it cost?
 
