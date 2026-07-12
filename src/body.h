@@ -180,7 +180,7 @@ typedef struct b3BodyState
 
 // Identity body state, notice the deltaRotation is identity
 static const b3BodyState b3_identityBodyState = {
-	{ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { { 0.0f, 0.0f, 0.0f }, 1.0f }, 0,
+	{ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { { 0.0f, 0.0f, 0.0f }, 1.0f }, 0, { 0, 0 },
 };
 
 // Body simulation data used for integration of position and velocity
