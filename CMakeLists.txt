@@ -77,12 +77,19 @@ endif()
 # https://box2d.org/posts/2024/08/determinism/
 # fast3d trades cross platform determinism for fused multiply-add.
 option(BOX3D_GO_FAST "Trade cross platform determinism for speed" ON)
-if (MINGW OR APPLE OR UNIX)
-	if (BOX3D_GO_FAST)
+if (BOX3D_GO_FAST)
+	if (MINGW OR APPLE OR UNIX)
 		add_compile_options(-ffp-contract=fast)
-	else()
-		add_compile_options(-ffp-contract=off)
 	endif()
+
+	# Link time optimization in release builds
+	include(CheckIPOSupported)
+	check_ipo_supported(RESULT BOX3D_IPO_SUPPORTED OUTPUT BOX3D_IPO_ERROR)
+	if (BOX3D_IPO_SUPPORTED)
+		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+	endif()
+elseif (MINGW OR APPLE OR UNIX)
+	add_compile_options(-ffp-contract=off)
 endif()
 
 option(BOX3D_DISABLE_SIMD "Disable SIMD math (slower)" OFF)
