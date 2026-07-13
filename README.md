@@ -4,26 +4,27 @@
 
 > ## ⚠️ DO NOT USE THIS LIBRARY
 >
-> This repo is a joke (love you Erin). Just like Fixed3D, it exists to make
-> [Erin Catto](https://github.com/erincatto) mad. If you want a 3D physics engine
-> for your game, use the real thing: [Box3D](https://github.com/erincatto/box3d).
->
-> Seriously. **DO NOT USE THIS LIBRARY.**
+> This repository exists for exactly one reason: to answer the question, can we
+> throw Claude Code at Box3D and make it faster? The answer is yes. But
+> [Erin Catto](https://github.com/erincatto) is much smarter than us, and any good
+> optimizations found here will be ported back into vanilla
+> [Box3D](https://github.com/erincatto/box3d) — so you should just use that.
 
 ## What is this?
 
-fast3d is a fork of [Box3D](https://github.com/erincatto/box3d) that asks the question:
-what happens if you take a physics engine written by the guy who invented modern game
-physics engines and simply refuse to care about one of the things he cares about?
+fast3d is a fork of [Box3D](https://github.com/erincatto/box3d) used as a test bed
+for one experiment: point [Claude Code](https://claude.com/claude-code) at a mature,
+carefully optimized physics engine and see whether it can find real speedups.
 
-It turns out it goes faster.
+It can. The catch is that the biggest single win comes from giving up cross platform
+determinism, which Box3D guarantees deliberately.
 
-## What did you do?
+## What changed?
 
 1. **`-ffp-contract=fast`** — Box3D pins floating point contraction off for
    [cross platform determinism](https://box2d.org/posts/2024/08/determinism/).
-   fast3d does not have cross platform determinism. fast3d has fused multiply-add.
-   Controlled by the `BOX3D_GO_FAST` CMake option, default `ON`, obviously.
+   fast3d trades that determinism for fused multiply-add. Controlled by the
+   `BOX3D_GO_FAST` CMake option, default `ON`.
 2. **Link time optimization** — on by default in release builds.
 3. **SIMD Gauss map edge rejection** — `b3QueryEdgeDirections` tests four hull edge
    pairs per iteration (NEON and SSE2). The Gauss map arc test rejects nearly every
@@ -32,7 +33,7 @@ It turns out it goes faster.
 4. **Transposed body gathers** — the contact solver gathers body state with vector
    loads and 4x4 transposes instead of building lanes one float at a time.
 5. **NEON support vertex scan** — four vertices per iteration with `vld3q` deinterleave.
-6. **`b3BodyState` padded to 64 bytes** — there was a `todo_erin` on it. You're welcome.
+6. **`b3BodyState` padded to 64 bytes** — resolving an existing `todo_erin` in the source.
 
 ## Benchmarks
 
@@ -81,7 +82,7 @@ so this is the single threaded comparison.
 joint_grid and rain give back about 2% on x86-64. The joint solver does not touch any
 of the SIMD kernels and the baseline x86-64 target has no FMA for `-ffp-contract=fast`
 to use, so on this machine those scenes are mostly measuring link time optimization
-moving code around. You get a 2.5x convex pile, Erin gets 2% of a joint grid. Fair trade.
+moving code around.
 
 ### Where the time goes
 
@@ -109,16 +110,16 @@ costs about 4.5x less than in Box3D.
 - Cross platform determinism: gone. Floating point contraction changes results across
   compilers and architectures.
 - Box3D's own `DeterminismTest` fails on Apple Silicon, because FMA rounds differently
-  in the scalar and SIMD solver paths, so results vary with worker count. Working as
-  intended. This is the part that makes Erin mad.
+  in the scalar and SIMD solver paths, so results vary with worker count. This is
+  expected: it is exactly the nondeterminism Box3D avoids by pinning contraction off.
 - On x86-64 the full Box3D unit test suite passes, including determinism, because the
   baseline target has no FMA and the SIMD kernels preserve results exactly.
 
 ## Should I use this?
 
 No. **DO NOT USE THIS LIBRARY.** Use [Box3D](https://github.com/erincatto/box3d).
-Erin will fold anything actually good from here into the real engine in a weekend,
-probably while writing a blog post explaining why my version of it is subtly wrong.
+Any optimization here that holds up will be ported back into vanilla Box3D, where it
+will be maintained, tested, and correct across platforms. This fork will not be.
 
 ## Building
 
@@ -128,5 +129,4 @@ built Box3D with extra steps.
 
 ## License
 
-MIT, same as Box3D. All the hard parts are Erin Catto's. The determinism-flavored
-vandalism is mine.
+MIT, same as Box3D. All the hard parts are Erin Catto's.
