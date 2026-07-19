@@ -1,0 +1,43 @@
+diff --git a/src/contact_solver.c b/src/contact_solver.c
+index 68f5a69..1c2ee1b 100644
+--- a/src/contact_solver.c
++++ b/src/contact_solver.c
+@@ -17,6 +17,13 @@
+ #include "shape.h"
+ #endif
+ 
++// Read-prefetch that changes no results (safe for cross-platform determinism)
++#if defined( __GNUC__ ) || defined( __clang__ )
++#define b3PrefetchRead( p ) __builtin_prefetch( ( p ), 0, 3 )
++#else
++#define b3PrefetchRead( p ) ( (void)0 )
++#endif
++
+ // contact separation for sub-stepping
+ // s = s0 + dot(cB + rB - cA - rA, normal)
+ // normal is held constant
+@@ -1652,6 +1659,24 @@ void b3SolveContacts_Convex( b3SolverBlock block, b3StepContext* context, bool u
+ 		b3BodyStateW bA = b3GatherBodies( states, c->indexA );
+ 		b3BodyStateW bB = b3GatherBodies( states, c->indexB );
+ 
++		// Hide the scattered gather latency of the next constraint's body states.
++		// Lane index 0 is the shared null body; skip it to avoid pulling that line.
++		if ( wideIndex + 1 < block.startIndex + block.count )
++		{
++			b3ContactConstraintWide* next = constraints + wideIndex + 1;
++			for ( int i = 0; i < B3_SIMD_WIDTH; ++i )
++			{
++				if ( next->indexA[i] != 0 )
++				{
++					b3PrefetchRead( states + ( next->indexA[i] - 1 ) );
++				}
++				if ( next->indexB[i] != 0 )
++				{
++					b3PrefetchRead( states + ( next->indexB[i] - 1 ) );
++				}
++			}
++		}
++
+ 		b3FloatW biasRate, massScale, impulseScale;
+ 		if ( useBias )
+ 		{

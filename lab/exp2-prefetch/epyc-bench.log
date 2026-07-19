@@ -1,0 +1,51 @@
+=== diff applied ===
+ src/contact_solver.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+-- Build files have been written to: /home/ubuntu/fast3d-lab/build-prefetch
+/usr/bin/cmake -E cmake_progress_start /home/ubuntu/fast3d-lab/build-prefetch/CMakeFiles 0
+=== bench: prefetch build, 1 worker, 3 reps ===
+## convex_pile
+run 0 : 25670.4 (ms)
+run 1 : 26032.9 (ms)
+run 2 : 25956.9 (ms)
+## joint_grid
+run 0 : 2134.16 (ms)
+run 1 : 2124.12 (ms)
+run 2 : 2136.65 (ms)
+## junkyard
+run 0 : 32591.1 (ms)
+run 1 : 31677.5 (ms)
+run 2 : 31617.2 (ms)
+## large_pyramid
+run 0 : 3758.02 (ms)
+run 1 : 3767.42 (ms)
+run 2 : 3779.99 (ms)
+## large_world
+run 0 : 11.1117 (ms)
+run 1 : 10.7317 (ms)
+run 2 : 14.0765 (ms)
+## many_pyramids
+run 0 : 4961.69 (ms)
+run 1 : 4967.49 (ms)
+run 2 : 4767.1 (ms)
+## rain
+run 0 : 3443.03 (ms)
+run 1 : 3390.89 (ms)
+run 2 : 3395.6 (ms)
+## trees100
+run 0 : 282.006 (ms)
+run 1 : 285.462 (ms)
+run 2 : 277.187 (ms)
+## trees50
+run 0 : 406.215 (ms)
+run 1 : 412.155 (ms)
+run 2 : 413.385 (ms)
+## trees25
+run 0 : 1005.23 (ms)
+run 1 : 1011.22 (ms)
+run 2 : 1016.97 (ms)
+## washer
+run 0 : 46373.6 (ms)
+run 1 : 47055.3 (ms)
+run 2 : 45522.4 (ms)
+=== DONE ===

@@ -1,0 +1,114 @@
+=== lab state ===
+e5e3285 Merge pull request #3 from mas-bandwidth/port/box3d-c37cfe4
+?? convex_pile.csv
+?? joint_grid.csv
+?? junkyard.csv
+=== cpu ===
+model name	: AMD EPYC 9124 16-Core Processor
+avx512f
+1
+=== existing build flags (baseline) ===
+CMAKE_C_FLAGS:STRING=
+CMAKE_C_FLAGS_DEBUG:STRING=-g
+=== configure v3 (AVX2+FMA) ===
+-- Generating done (0.0s)
+-- Build files have been written to: /home/ubuntu/fast3d-lab/build-v3
+gmake[1]: Leaving directory '/home/ubuntu/fast3d-lab/build-v3'
+/usr/bin/cmake -E cmake_progress_start /home/ubuntu/fast3d-lab/build-v3/CMakeFiles 0
+=== configure znver4 (adds AVX-512) ===
+-- Generating done (0.0s)
+-- Build files have been written to: /home/ubuntu/fast3d-lab/build-znver4
+gmake[1]: Leaving directory '/home/ubuntu/fast3d-lab/build-znver4'
+/usr/bin/cmake -E cmake_progress_start /home/ubuntu/fast3d-lab/build-znver4/CMakeFiles 0
+=== bench sweeps (1 worker, 3 reps each) ===
+--- build-v3 (build-v3/bin/benchmark) ---
+## convex_pile
+run 0 : 22652.2 (ms)
+run 1 : 22298 (ms)
+run 2 : 22141.1 (ms)
+## joint_grid
+run 0 : 1799.7 (ms)
+run 1 : 1796.99 (ms)
+run 2 : 1784.56 (ms)
+## junkyard
+run 0 : 29674.5 (ms)
+run 1 : 29643.8 (ms)
+run 2 : 30224.9 (ms)
+## large_pyramid
+run 0 : 3481.99 (ms)
+run 1 : 3437.97 (ms)
+run 2 : 3419.09 (ms)
+## large_world
+run 0 : 13.8685 (ms)
+run 1 : 13.3002 (ms)
+run 2 : 10.3068 (ms)
+## many_pyramids
+run 0 : 4306.24 (ms)
+run 1 : 4273.08 (ms)
+run 2 : 4247.05 (ms)
+## rain
+run 0 : 3217.14 (ms)
+run 1 : 3232.7 (ms)
+run 2 : 3309.97 (ms)
+## trees100
+run 0 : 276.867 (ms)
+run 1 : 283.325 (ms)
+run 2 : 267.751 (ms)
+## trees50
+run 0 : 392.048 (ms)
+run 1 : 410.422 (ms)
+run 2 : 420.191 (ms)
+## trees25
+run 0 : 1039.81 (ms)
+run 1 : 996.235 (ms)
+run 2 : 1003.31 (ms)
+## washer
+run 0 : 43528.2 (ms)
+run 1 : 43054.8 (ms)
+run 2 : 42714.6 (ms)
+--- build-znver4 (build-znver4/bin/benchmark) ---
+## convex_pile
+run 0 : 21917 (ms)
+run 1 : 21702.7 (ms)
+run 2 : 21047.1 (ms)
+## joint_grid
+run 0 : 1666.41 (ms)
+run 1 : 1672.55 (ms)
+run 2 : 1666.46 (ms)
+## junkyard
+run 0 : 29056.6 (ms)
+run 1 : 28075.4 (ms)
+run 2 : 28677 (ms)
+## large_pyramid
+run 0 : 3412.86 (ms)
+run 1 : 3384.27 (ms)
+run 2 : 3400.15 (ms)
+## large_world
+run 0 : 13.4098 (ms)
+run 1 : 12.9845 (ms)
+run 2 : 13.1 (ms)
+## many_pyramids
+run 0 : 4191.92 (ms)
+run 1 : 4187.44 (ms)
+run 2 : 4131.98 (ms)
+## rain
+run 0 : 3077.49 (ms)
+run 1 : 3106.4 (ms)
+run 2 : 3117.45 (ms)
+## trees100
+run 0 : 271.821 (ms)
+run 1 : 261.54 (ms)
+run 2 : 254.154 (ms)
+## trees50
+run 0 : 381.989 (ms)
+run 1 : 394.721 (ms)
+run 2 : 381.528 (ms)
+## trees25
+run 0 : 930.638 (ms)
+run 1 : 905.897 (ms)
+run 2 : 944.311 (ms)
+## washer
+run 0 : 42022.1 (ms)
+run 1 : 41090.1 (ms)
+run 2 : 41418.4 (ms)
+=== DONE ===

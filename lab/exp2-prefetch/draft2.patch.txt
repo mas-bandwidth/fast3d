@@ -1,0 +1,33 @@
+# Macro block (unchanged)
+<<<<<<< SEARCH src/contact_solver.h
+#define B3_MAX_MANIFOLD_POINTS 4
+=======
+#define B3_MAX_MANIFOLD_POINTS 4
+>>>>>>> REPLACE
+
+# Prefetch insertion in b3SolveContacts_Convex
+<<<<<<< SEARCH src/contact_solver.c
+	b3BodyStateW bA = b3GatherBodies( states, c->indexA );
+	b3BodyStateW bB = b3GatherBodies( states, c->indexB );
+	b3FloatW biasRate, massScale, impulseScale;
+	if ( useBias )
+=======
+	b3BodyStateW bA = b3GatherBodies( states, c->indexA );
+	b3BodyStateW bB = b3GatherBodies( states, c->indexB );
+
+	// Hide the next gather's latency
+	if ( wideIndex + 1 < block.startIndex + block.count )
+	{
+		b3ContactConstraintWide* next = constraints + wideIndex + 1;
+		for ( int i = 0; i < 4; ++i )
+		{
+			if ( next->indexA[i] != 0 )
+				b3Prefetch( states + ( next->indexA[i] - 1 ) );
+			if ( next->indexB[i] != 0 )
+				b3Prefetch( states + ( next->indexB[i] - 1 ) );
+		}
+	}
+
+	b3FloatW biasRate, massScale, impulseScale;
+	if ( useBias )
+>>>>>>> REPLACE

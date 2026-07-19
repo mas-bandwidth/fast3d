@@ -1,0 +1,49 @@
+# Add portable read-prefetch macro
+<<<<<<< SEARCH src/contact_solver.c
+#include "contact_solver.h"
+
+#include "body.h"
+#include "constraint_graph.h"
+#include "contact.h"
+#include "core.h"
+#include "math_internal.h"
+#include "physics_world.h"
+#include "platform.h"
+#include "simd.h"
+#include "solver_set.h"
+=======
+#include "contact_solver.h"
+
+#include "body.h"
+#include "constraint_graph.h"
+#include "contact.h"
+#include "core.h"
+#include "math_internal.h"
+#include "physics_world.h"
+#include "platform.h"
+#include "simd.h"
+#include "solver_set.h"
+
+#if defined( __GNUC__ ) || defined( __clang__ )
+#define b3PrefetchRead(p) __builtin_prefetch( (p), 0, 3 )
+#else
+#define b3PrefetchRead(p)
+#endif
+>>>>>>> REPLACE
+
+# Hide the scattered gather latency of the next constraint
+<<<<<<< SEARCH src/contact_solver.c
+		b3BodyStateW bA = b3GatherBodies( states, c->indexA );
+		b3BodyStateW bB = b3GatherBodies( states, c->indexB );
+=======
+		b3BodyStateW bA = b3GatherBodies( states, c->indexA );
+		b3BodyStateW bB = b3GatherBodies( states, c->indexB );
+
+		if ( wideIndex + 1 < block.startIndex + block.count ) {
+			b3ContactConstraintWide* next = constraints + wideIndex + 1;
+			for ( int i = 0; i < 4; ++i ) {
+				if ( next->indexA[i] != 0 ) b3PrefetchRead( states + ( next->indexA[i] - 1 ) );
+				if ( next->indexB[i] != 0 ) b3PrefetchRead( states + ( next->indexB[i] - 1 ) );
+			}
+		}
+>>>>>>> REPLACE

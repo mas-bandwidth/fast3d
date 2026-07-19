@@ -126,24 +126,86 @@ is the higher-signal machine for small effects — but a NEON win must still be 
 the contact-solver gather loop (backlog #1). Smallest isolated change, clean on the
 low-noise EPYC, and if it holds it is a genuine gift for Box3D.
 
+### 2026-07-19 — Night 1 (daytime big push): march flags CONFIRMED big; prefetch FALSIFIED
+
+**Deviation from protocol, disclosed:** run in the daytime as a Glenn-funded push, three
+experiment legs in one session instead of one per night. Also the first use of the
+local-coder loop (a local 32B model drafts patches from my written spec; I review every
+line, benchmark, and judge). The loop's honest score so far: drafts the logic correctly,
+fumbles patch anchoring in a 2300-line file; nothing wrong ever reached the tree because
+the applier only accepts exact matches. Design and verdicts stay human-grade.
+
+**Experiment A (backlog #2) — [det-breaking, fork-only] EPYC compiler flags, no source change.**
+Two extra builds vs the SSE2 baseline: `-march=x86-64-v3` (AVX2+FMA) and `-march=znver4`
+(adds AVX-512). Full suite, 1 worker, 3 reps, medians:
+
+| benchmark | sse2 | v3 | Δ | znver4 | Δ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| convex_pile | 25728.8 | 22298.0 | -13.3% | 21702.7 | **-15.6%** |
+| joint_grid | 2121.5 | 1797.0 | -15.3% | 1666.5 | **-21.4%** |
+| junkyard | 31942.9 | 29674.5 | -7.1% | 28677.0 | -10.2% |
+| large_pyramid | 3786.2 | 3438.0 | -9.2% | 3400.2 | -10.2% |
+| large_world | 10.8 | 13.3 | +22.7% | 13.1 | +20.8% ⚠ |
+| many_pyramids | 4767.3 | 4273.1 | -10.4% | 4187.4 | -12.2% |
+| rain | 3389.5 | 3232.7 | -4.6% | 3106.4 | -8.4% |
+| trees100 | 276.2 | 276.9 | +0.2% | 261.5 | -5.3% |
+| trees50 | 399.6 | 410.4 | +2.7% | 382.0 | -4.4% |
+| trees25 | 1006.9 | 1003.3 | -0.4% | 930.6 | -7.6% |
+| washer | 46179.8 | 43054.8 | -6.8% | 41418.4 | -10.3% |
+
+**Conclusion A.** znver4 strictly beats v3 and wins 5-21% on every contact-heavy scene.
+FMA is doing most of it (the fork already compiles with `-ffp-contract=fast`; SSE2 simply
+has no FMA instruction to contract into — v3 unlocks it, znver4 adds AVX-512 + tuning).
+Fork-only forever: hardware FMA changes results, so this is nothing for Box3D. ⚠ large_world
+regressed ~21% on BOTH builds — tiny scene (11ms) but consistent; investigate before
+adopting znver4 as the fork's default EPYC build (new backlog item).
+
+**Experiment B (backlog #1) — [det-preserving] software prefetch of the next constraint's
+body states in `b3SolveContacts_Convex`.** `b3PrefetchRead` after the current gathers,
+next constraint's 8 states, null lanes skipped. Pre-registered success bar: >2% on EPYC
+convex_pile.
+
+- **EPYC (1 thread, the low-noise machine): FLAT.** convex_pile +0.9% med / -0.1% min.
+  Junkyard -0.8% is inside noise. The bar was NOT met.
+- **M3 (8 workers): plausible wins only on the two biggest scenes** — junkyard -4.7% med /
+  -6.1% min and washer -4.7% med (n=8, median and min agree) — but both scenes carry
+  ±7% baseline spread, so this is "worth a dedicated interleaved A/B," not "confirmed."
+- **Cross-platform regression found:** trees50 +3.1% EPYC / +3.2% Mac. Consistent on both
+  ISAs — the most trustworthy signal in the experiment. Prefetch is pure overhead when the
+  gathers already hit cache (trees scenes have few dynamic contacts).
+
+**Conclusion B — hypothesis FALSIFIED where it predicted the most.** My model said the
+latency-bound single-thread EPYC gains most; it gained nothing. Best current explanation:
+the constraint blocks walk bodies in a cache-friendly enough order that OoO + hardware
+prefetch already cover the gather, and the extra ~16 prefetch instructions per iteration
+just cost issue slots; the Mac's apparent junkyard/washer gain (if real) would be about
+scheduling loads around 8-worker bandwidth contention, not single-stream latency.
+**Not merged** (kept on branch `exp/prefetch-gather`, commit 822aa8d). **NOT offered to
+Box3D** — it does not clear the "confirmed on both machines" bar, and it carries a real
+trees regression. This is the gift-channel discipline working, not failing: Erin gets
+verified wins only.
+
+**Next.** (1) Investigate the znver4 large_world regression, then adopt znver4 for the
+fork's EPYC build. (2) Struct-layout audit (backlog #4) with the local-coder loop.
+(3) If the Mac junkyard/washer effect still itches: dedicated interleaved A/B on the Mac
+only, framed as a Mac-only scheduling question, not the original latency hypothesis.
+
 ---
 
 ## Hypothesis backlog
 *(prioritized; one per night; tagged det-preserving vs det-breaking)*
 
-1. **[det-preserving] Software prefetch in the contact-solver body-state gather.**
-   `__builtin_prefetch` the next iteration's `stateA/stateB` (or the next gather batch's
-   indices) during the current constraint solve, to hide the scattered-load latency in
-   `b3GatherBodies` / the solve/relax loops in `contact_solver.c`. Prefetch changes no float
-   results → determinism-safe. *Predict:* small but real, biggest on contact-heavy
-   convex_pile / junkyard; likely larger on the memory-latency-bound single-thread EPYC than
-   on the 8-worker Mac. Target >2% on EPYC convex_pile. **← Night 1.**
+1. ~~[det-preserving] Software prefetch in the contact-solver body-state gather.~~
+   **DONE Night 1: FALSIFIED on EPYC (flat, bar not met), trees regression both machines.
+   Not merged; branch `exp/prefetch-gather`. Residual: optional Mac-only interleaved A/B
+   for the junkyard/washer effect.**
 
-2. **[det-breaking, EPYC-only] Build the EPYC with AVX2 + FMA (`-march=znver4` or
-   `-mavx2 -mfma`).** The current x86 build is SSE2 4-wide with no hardware FMA. Just letting
-   the compiler use AVX2 + FMA (no source change) could be a large single-thread win on the
-   contact-heavy scenes. Determinism-breaking (FMA + wider reductions), so fork-only — but
-   potentially the biggest EPYC number available. Measure carefully; classify strictly.
+2. ~~[det-breaking, EPYC-only] Build the EPYC with AVX2 + FMA.~~ **DONE Night 1: CONFIRMED
+   big (znver4: -8% to -21% on all contact scenes). Before adopting as the fork's default
+   EPYC build: investigate the large_world +21% regression (tiny scene, but consistent on
+   v3 AND znver4). Then wire `-march=znver4` into the linux-release preset under
+   BOX3D_GO_FAST. Follow-on: try `-mcpu=native` tuning on the M3 (same class of experiment,
+   Apple side).**
 
 3. **[det-breaking] 8-wide `b3FloatW8` (AVX2 `__m256`) path for the contact-solver constraint
    batches on x86.** The solver processes constraints in groups of 4 (SIMD width). Widening
