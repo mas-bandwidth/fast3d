@@ -26,10 +26,12 @@ determinism, which Box3D guarantees deliberately.
    fast3d trades that determinism for fused multiply-add. Controlled by the
    `BOX3D_GO_FAST` CMake option, default `ON`.
 2. **Link time optimization** — on by default in release builds.
-3. **SIMD Gauss map edge rejection** — `b3QueryEdgeDirections` tests four hull edge
-   pairs per iteration (NEON and SSE2). The Gauss map arc test rejects nearly every
-   edge pair, so the wide reject path is nearly the whole loop. This is most of the
-   win on hull-heavy scenes.
+3. **SIMD Gauss map edge rejection** *(retired)* — fast3d's `b3QueryEdgeDirections`
+   tested four hull edge pairs per iteration (NEON and SSE2), and was most of the win
+   on hull-heavy scenes. Box3D has since shipped its own
+   [SIMD hull collision](https://github.com/erincatto/box3d/pull/93) that vectorizes
+   the whole pipeline over SoA hull data. That work is ported here and supersedes the
+   fast3d kernel — the benchmark tables below predate it on both sides.
 4. **Transposed body gathers** — the contact solver gathers body state with vector
    loads and 4x4 transposes instead of building lanes one float at a time.
 5. **NEON support vertex scan** — four vertices per iteration with `vld3q` deinterleave.

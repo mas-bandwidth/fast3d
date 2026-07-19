@@ -212,7 +212,6 @@ typedef struct b3BodySim
 
 	float minExtent;
 	b3Vec3 maxExtent;
-	float maxAngularVelocity;
 	float linearDamping;
 	float angularDamping;
 	float gravityScale;
