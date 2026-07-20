@@ -190,6 +190,72 @@ fork's EPYC build. (2) Struct-layout audit (backlog #4) with the local-coder loo
 (3) If the Mac junkyard/washer effect still itches: dedicated interleaved A/B on the Mac
 only, framed as a Mac-only scheduling question, not the original latency hypothesis.
 
+### 2026-07-20 — Night 2: the znver4 `large_world` regression was MY MEASUREMENT ERROR
+
+**Deviation from protocol, disclosed:** ran at ~08:00 rather than 01:00 (the 01:00 slot was
+dark). Because Glenn is awake and using the Mac, this night is **EPYC-only by design** — no
+Mac numbers, so nothing here is offered to Box3D. Investigating my own prior result needs
+only the one machine that produced it.
+
+**Hypothesis.** Night 1 reported `large_world` +21% *slower* under both `-march=x86-64-v3`
+and `-march=znver4`. Before adopting znver4 as the fork's EPYC build I need the cause. My
+first guess — AVX-512 downclocking — was **dead on arrival**: v3 has no AVX-512 at all and
+regressed by the same +22.7%. So the revised hypothesis was that FMA contraction changes
+float results, changing broadphase overlap outcomes, and the scene genuinely does more work.
+
+**Method.** EPYC 9124, 1 worker. Two arms differing in exactly one flag (`-march=znver4` vs
+the SSE2 default), separate build dirs, interleaved A/B/A/B in two blocks, **n=30 reps** per
+arm instead of Night 1's 3. Then the same A/B rebuilt at Night 1's exact commit (`e5e3285`,
+via a throwaway worktree) to separate "upstream changed" from "I measured badly".
+
+**Result — the work is identical, and there is no regression.**
+
+The harness already prints scene counters, which answers the workload question outright:
+**both arms report `contact 380` / `body 1000099`, identical on every run.** FMA is not
+changing the contact set. Timings (ms):
+
+| tree | arm | median | min |
+| --- | ---: | ---: | ---: |
+| new (`0e110e0`) | sse2 | 11.40 | 8.14 |
+| new (`0e110e0`) | znver4 | 7.62 | 7.28 |
+| Night 1 (`e5e3285`) | sse2 | 13.98 | 10.79 |
+| Night 1 (`e5e3285`) | znver4 | 12.94 | 9.73 |
+
+znver4 is **faster** on `large_world` on both trees: −10.5% (new) and −9.9% (old) by min.
+At Night 1's own commit, with 30 reps instead of 3, the claimed +21% regression is a −10% win.
+
+**Why Night 1 got it wrong: `large_world` is BIMODAL.** Every arm, on both trees, produces
+two tight, discrete, reproducible clusters about 3 ms apart (znver4: ~7.3 and ~10.5; sse2:
+~8.2 and ~11.4), plus occasional 15–22 ms fliers. This is not gaussian noise, so a 3-rep
+median does not estimate anything — it reports which mode won the lottery. From tonight's
+own data, the first 3 reps alone would have "shown" −36.3%; Night 1's 3 reps showed +21%.
+Both are artifacts of the same distribution.
+
+**Methodology fix (adopted from tonight, applies to every future night).**
+1. **Min, not median, on bimodal scenes.** Min is the statistic that held steady across two
+   different trees (−10.5% vs −9.9%); the median swung −33% vs −7% on the same comparison.
+2. **n=3 is banned on any scene whose Night 0 spread exceeded ~10%** (`large_world`,
+   `large_pyramid`, `trees100`). Those need n≥15 per arm, interleaved. n=3 remains fine on
+   the big low-spread scenes (`rain` reproduced at <1% spread tonight).
+3. **Check the counters before theorising about timing.** One printed line (`contact 380`)
+   killed the "FMA changes the workload" hypothesis for free, before any profiling.
+
+**Side observations.** (a) The `port/box3d-dfa5e6a` merge made `large_world` substantially
+faster on both arms (sse2 min 10.79→8.14, znver4 12.94→7.62) — upstream work, not mine.
+(b) The FMA win re-confirms on the new tree: `rain` −12.1% by both median and min, n=6,
+<1% within-arm spread.
+
+**Conclusion.** The blocker on backlog #2 is **CLEARED** — there is no `large_world`
+regression to explain; there never was one. [det-breaking, fork-only] znver4 is a
+uniform win on the EPYC. The durable value of tonight is the falsification of my own Night 1
+number and the measurement rules above. Recorded rather than quietly corrected: a lab
+notebook that only records other people's errors is not a lab notebook.
+
+**Next.** Wire `-march=znver4` into the fork's `linux-release` under `BOX3D_GO_FAST` — but
+**guarded**, since an unconditional `-march=znver4` breaks the build for every non-Zen4 x86
+user. That guard (a CMake capability probe, plus deciding between `znver4` and the portable
+`x86-64-v3`) is its own night's careful work, not a tail-end edit tonight.
+
 ---
 
 ## Hypothesis backlog
@@ -200,12 +266,16 @@ only, framed as a Mac-only scheduling question, not the original latency hypothe
    Not merged; branch `exp/prefetch-gather`. Residual: optional Mac-only interleaved A/B
    for the junkyard/washer effect.**
 
-2. ~~[det-breaking, EPYC-only] Build the EPYC with AVX2 + FMA.~~ **DONE Night 1: CONFIRMED
-   big (znver4: -8% to -21% on all contact scenes). Before adopting as the fork's default
-   EPYC build: investigate the large_world +21% regression (tiny scene, but consistent on
-   v3 AND znver4). Then wire `-march=znver4` into the linux-release preset under
-   BOX3D_GO_FAST. Follow-on: try `-mcpu=native` tuning on the M3 (same class of experiment,
-   Apple side).**
+2. ~~[det-breaking, EPYC-only] Build the EPYC with AVX2 + FMA.~~ **CONFIRMED big Night 1
+   (-8% to -21% on all contact scenes). The large_world "+21% regression" blocker was
+   RETRACTED Night 2 — it was a 3-rep artifact on a bimodal scene; znver4 is actually -10%
+   there. Remaining work is now item 2b below.**
+
+2b. **[det-breaking, build-system] Wire `-march=znver4` into `linux-release` under
+   `BOX3D_GO_FAST`, guarded.** Unconditional `-march=znver4` breaks the build for non-Zen4
+   x86 users, so this needs a CMake capability probe and a decision between `znver4` and the
+   portable `x86-64-v3` as the default. Careful, self-contained night. Follow-on: `-mcpu=native`
+   tuning on the M3 (same class of experiment, Apple side).
 
 3. **[det-breaking] 8-wide `b3FloatW8` (AVX2 `__m256`) path for the contact-solver constraint
    batches on x86.** The solver processes constraints in groups of 4 (SIMD width). Widening
@@ -221,6 +291,13 @@ only, framed as a Mac-only scheduling question, not the original latency hypothe
    prefetch of child nodes are determinism-safe and would help the pairs/refit profile
    buckets. Lower priority until profiling shows broadphase is a meaningful slice.
 
-6. **[research night] Read Box3D's TGS-soft solver math and the upstream SIMD-hull PR (#93)
+6. **[investigation] Why is `large_world` bimodal?** Two tight modes ~3 ms apart, in every
+   arm and both trees, with identical contact counts (Night 2). The scene allocates ~1M
+   bodies and a 520 MB arena, so the prime suspects are page placement / transparent
+   hugepage luck for the big allocation, or a static-tree build that lands in one of two
+   shapes. Worth knowing because it is currently the least trustworthy benchmark in the
+   suite — and if it is THP, the same effect is silently taxing the other big scenes.
+
+7. **[research night] Read Box3D's TGS-soft solver math and the upstream SIMD-hull PR (#93)
    in depth, plus a NEON/AVX gather-latency reference.** Refill the hypothesis backlog with
    solver-algorithmic (not just micro-arch) ideas. A pure-learning night is a valid night.
