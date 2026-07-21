@@ -37,6 +37,15 @@ determinism, which Box3D guarantees deliberately.
 5. **NEON support vertex scan** — four vertices per iteration with `vld3q` deinterleave.
 6. **`b3BodyState` padded to 64 bytes** — resolving an existing `todo_erin` in the source.
 
+## What didn't work
+
+- **`restrict` on the hot paths.** Annotating the body gather and scatter, the polygon
+  clipper and the SoA support helpers changed zero of 304 functions in the benchmark
+  binary — identical machine code, so identical timings. The hot loops are already
+  hand-written intrinsics over SoA data, and ThinLTO plus type-based alias analysis
+  cover the rest. `restrict` pays where the compiler is blind across a function
+  boundary; this codebase has few left.
+
 ## Benchmarks
 
 The benchmark suite that ships with Box3D. Stock Box3D and fast3d are each built with
@@ -117,42 +126,16 @@ costs about 4.5x less than in Box3D.
 - On x86-64 the full Box3D unit test suite passes, including determinism, because the
   baseline target has no FMA and the SIMD kernels preserve results exactly.
 
-**The switch is the whole story, and it has been measured both ways.** On an M3 Ultra,
-release build, `DeterminismTest` fails with `BOX3D_GO_FAST=ON` (the failing subtest is
-`MultithreadingTest`, matching the worker-count explanation above) and the entire suite
-passes with `BOX3D_GO_FAST=OFF`. Nothing else changed between the two runs. The option
-reaches no source file — it only selects `-ffp-contract=fast` plus LTO, or
-`-ffp-contract=off` — so contraction is the sole cause of the divergence here, not
-thread scheduling or accumulation order.
+**Determinism is recoverable with one flag, and contraction is what costs it.** M3 Ultra,
+release, Box3D's own `DeterminismTest`:
 
-A red `DeterminismTest` in a default build is therefore the test doing its job, not a
-bug to be skipped. If both promises matter to you, run the suite in both
-configurations.
+| `-ffp-contract` | LTO | result |
+| --- | --- | --- |
+| `fast` | on | fails (`MultithreadingTest`) |
+| `off` | on | passes |
+| `off` | off | passes |
 
-## What didn't work
-
-This fork exists to find out what Claude Code can do to a mature engine, so the
-measured misses belong here too. They cost a day each to rule out, and recording them
-is cheaper than someone repeating them.
-
-- **`restrict` / `__restrict__` on the hot paths.** The classic advice: C and C++ must
-  assume two pointers may alias, which blocks keeping values in registers across
-  stores and blocks auto-vectorization, and one keyword removes the obstacle. It buys
-  nothing here. Annotating the contact solver's body gather and scatter, the polygon
-  clipper, the SoA support-vertex helpers and the velocity integration changed **zero
-  of 304 functions** in the fast3d benchmark binary — the machine code is identical
-  before and after, so the timings could not differ and did not. `-Rpass-analysis`
-  reports no aliasing-blocked loops in either build.
-
-  The reason is structural rather than marginal, and it is why this is unlikely to
-  change: the hot loops are already hand-written NEON and SSE intrinsics over SoA
-  data, so auto-vectorization was never on the table; the helpers taking pointer pairs
-  are `static inline` and get inlined into callers that hold the buffers as locals, so
-  the function boundary the optimization depends on does not survive to codegen; ThinLTO
-  already gives cross-translation-unit visibility; and Clang's type-based alias analysis
-  already separates `b3BodyState` from `b3BodySim`. `restrict` pays where a compiler is
-  blind at a function boundary. This codebase has systematically removed those
-  boundaries.
+`BOX3D_GO_FAST` moves both knobs together; the middle row isolates contraction.
 
 ## Should I use this?
 
