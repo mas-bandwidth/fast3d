@@ -9,13 +9,12 @@ Apple/Unix/MinGW plus Release LTO. Not an oversight.
 
 **So an optimized ARM build FAILS `DeterminismTest`. EXPECTED.** Measured, M3 Ultra:
 Release + GO_FAST gives sleepStep 344 / hash 0xD12BC462 vs the goldens 308 / 0x1E5EDD79
-in test/test_determinism.c. Isolated: fp-contract=fast with LTO off still fails; LTO with
-fp-contract=off passes; Debug passes. So the cause is contraction, not LTO. It is NOT a
-worker-count effect: workers 1-8 all give the same 344 / 0xD12BC462, and the
-contraction-off control gives 308 / 0x1E5EDD79 at all eight. The optimized build is
-internally deterministic across schedules; it simply does not match the pinned goldens.
+in test/test_determinism.c. Cause is contraction, not LTO (fp-contract=fast without LTO
+still fails; LTO with fp-contract=off passes; Debug passes). NOT a worker-count effect:
+workers 1-8 all give the same 344 / 0xD12BC462, control gives 308 / 0x1E5EDD79 at all
+eight. The optimized build is internally deterministic; it just misses the pinned values.
 Do NOT rebaseline goldens, flip the default, or file it as a bug. CI cannot see it: the
-test matrix is Debug, and its one optimized test job (windows-mingw) is x86-64, no baseline FMA.
+matrix is Debug, and its one optimized job (windows-mingw) is x86-64, no baseline FMA.
 
 **INVARIANT: the determinism line.** DETERMINISM-PRESERVING work (cache/SoA layout,
 branchless, prefetch, algorithmic/integer, deterministic SIMD) may be offered
@@ -24,12 +23,11 @@ DETERMINISM-BREAKING work (FMA, fp-contract, reassociation, fast-math, any float
 is fork-only forever and useless upstream. ERIN.md's "Easy wins" list is
 determinism-preserving ONLY.
 
-**TRAPS.** Nothing inside is named fast3d: project, headers, options, symbols are all
+**TRAPS.** Nothing inside is named fast3d: project, headers, options and symbols are all
 `box3d` / `BOX3D_` / `b3`. An upstream port is a plain merge of `upstream/main`. In any
-checkout carrying an `upstream` remote, `gh` silently resolves to erincatto/box3d, so
-`gh run list` / `gh pr list` return HIS runs and PRs. Always pass
-`--repo mas-bandwidth/fast3d`. CI fires on push, pull_request and workflow_dispatch, so
-one sha gets duplicate runs; gate on matching headSha.
+checkout with an `upstream` remote, `gh` silently resolves to erincatto/box3d and returns
+HIS runs and PRs, so always pass `--repo mas-bandwidth/fast3d`. CI fires on push,
+pull_request and workflow_dispatch, so one sha gets duplicate runs; gate on headSha.
 
 **NEVER** push or open a PR against erincatto/box3d. Give any `upstream` remote a dead push URL.
 <!-- HOT:END -->
