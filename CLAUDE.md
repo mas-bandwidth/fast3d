@@ -27,7 +27,7 @@ checkout with an `upstream` remote, `gh` silently resolves to erincatto/box3d an
 HIS runs and PRs, so always pass `--repo mas-bandwidth/fast3d`. CI fires on push,
 pull_request and workflow_dispatch, so one sha gets duplicate runs; gate on headSha.
 
-**NEVER** push or open a PR against erincatto/box3d. Give any `upstream` remote a dead push URL.
+**NEVER** push or PR against erincatto/box3d. Give any `upstream` remote a dead push URL.
 <!-- HOT:END -->
 
 ## Build and test
