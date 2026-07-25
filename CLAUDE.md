@@ -8,12 +8,14 @@ determinism IS the point.
 Apple/Unix/MinGW plus Release LTO. Not an oversight.
 
 **So an optimized ARM build FAILS `DeterminismTest`. EXPECTED.** Measured, M3 Ultra:
-Release + GO_FAST gives workers=1 sleepStep 344 / hash 0xD12BC462 vs the goldens 308 /
-0x1E5EDD79 in test/test_determinism.c. Isolated: fp-contract=fast with LTO off still
-fails; LTO with fp-contract=off passes; Debug passes. So it is contraction, not LTO, and
-it already diverges at workers=1 (README blames worker count; that is wrong). Do NOT
-rebaseline goldens, flip the default, or file it as a bug. CI cannot see it: the test
-matrix is Debug, and its one optimized test job (windows-mingw) is x86-64, no baseline FMA.
+Release + GO_FAST gives sleepStep 344 / hash 0xD12BC462 vs the goldens 308 / 0x1E5EDD79
+in test/test_determinism.c. Isolated: fp-contract=fast with LTO off still fails; LTO with
+fp-contract=off passes; Debug passes. So the cause is contraction, not LTO. It is NOT a
+worker-count effect: workers 1-8 all give the same 344 / 0xD12BC462, and the
+contraction-off control gives 308 / 0x1E5EDD79 at all eight. The optimized build is
+internally deterministic across schedules; it simply does not match the pinned goldens.
+Do NOT rebaseline goldens, flip the default, or file it as a bug. CI cannot see it: the
+test matrix is Debug, and its one optimized test job (windows-mingw) is x86-64, no baseline FMA.
 
 **INVARIANT: the determinism line.** DETERMINISM-PRESERVING work (cache/SoA layout,
 branchless, prefetch, algorithmic/integer, deterministic SIMD) may be offered
