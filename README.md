@@ -112,8 +112,9 @@ costs about 4.5x less than in Box3D.
 - Cross platform determinism: gone. Floating point contraction changes results across
   compilers and architectures.
 - Box3D's own `DeterminismTest` fails on Apple Silicon, because FMA rounds differently
-  in the scalar and SIMD solver paths, so results vary with worker count. This is
-  expected: it is exactly the nondeterminism Box3D avoids by pinning contraction off.
+  than the separate multiply and add, so an optimized build misses the results the test
+  pins at every worker count, single threaded included. This is expected: it is exactly
+  the nondeterminism Box3D avoids by pinning contraction off.
 - On x86-64 the full Box3D unit test suite passes, including determinism, because the
   baseline target has no FMA and the SIMD kernels preserve results exactly.
 
