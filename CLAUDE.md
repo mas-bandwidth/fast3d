@@ -10,8 +10,8 @@ Apple/Unix/MinGW plus Release LTO. Not an oversight.
 Release + GO_FAST gives sleepStep 344 / hash 0xD12BC462 vs the goldens 308 / 0x1E5EDD79
 in test/test_determinism.c. Cause is contraction, not LTO (fp-contract=fast without LTO
 still fails; LTO with fp-contract=off passes; Debug passes). NOT a worker-count effect:
-workers 1-8 all give the same 344 / 0xD12BC462, control gives 308 / 0x1E5EDD79 at all
-eight. The optimized build is internally deterministic; it just misses the pinned values.
+workers 1-8 all give 344 / 0xD12BC462, and the control gives the goldens at all eight.
+The optimized build is internally deterministic; it just misses the pinned values.
 Do NOT rebaseline goldens, flip the default, or file it as a bug. CI cannot see it: the
 matrix is Debug, and its one optimized job (windows-mingw) is x86-64, no baseline FMA.
 
