@@ -1,7 +1,6 @@
 <!-- HOT:BEGIN -->
 **WHAT.** Performance fork of erincatto/box3d. Floats stay floats; wins are FMA, LTO,
-SIMD, cache layout. NOT mas-bandwidth/fixed3d, the Q48.16 fixed-point sibling where
-determinism IS the point.
+SIMD, cache layout. NOT fixed3d, the Q48.16 sibling where determinism IS the point.
 
 **DECISION: cross-platform determinism is traded for speed, deliberately.**
 `BOX3D_GO_FAST` (CMakeLists.txt, default **ON**) adds `-ffp-contract=fast` on
@@ -17,11 +16,10 @@ Do NOT rebaseline goldens, flip the default, or file it as a bug. CI cannot see 
 matrix is Debug, and its one optimized job (windows-mingw) is x86-64, no baseline FMA.
 
 **INVARIANT: the determinism line.** DETERMINISM-PRESERVING work (cache/SoA layout,
-branchless, prefetch, algorithmic/integer, deterministic SIMD) may be offered
-upstream to box3d, which requires bit-identical results on every platform.
-DETERMINISM-BREAKING work (FMA, fp-contract, reassociation, fast-math, any float reorder)
-is fork-only forever and useless upstream. ERIN.md's "Easy wins" list is
-determinism-preserving ONLY.
+branchless, prefetch, algorithmic/integer, deterministic SIMD) may be offered upstream to
+box3d, which requires bit-identical results everywhere. DETERMINISM-BREAKING work (FMA,
+fp-contract, reassociation, fast-math, any float reorder) is fork-only, useless upstream.
+ERIN.md's "Easy wins" list is determinism-preserving ONLY.
 
 **TRAPS.** Nothing inside is named fast3d: project, headers, options and symbols are all
 `box3d` / `BOX3D_` / `b3`. An upstream port is a plain merge of `upstream/main`. In any
