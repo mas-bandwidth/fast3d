@@ -1,108 +1,84 @@
-# Contributing to Box3D
+# Contributing to fast3d
 
-This project is open source under the [MIT License](LICENSE). Please read this document
-before opening a pull request — **PRs that skip these steps will be closed.**
+Pull requests are welcome. If a change is good and useful, we will merge it.
 
----
+fast3d is a fork of [Box3D](https://github.com/erincatto/box3d) by Erin Catto, and Box3D
+does not take pull requests. That is Erin's call for his project, and a reasonable one. It
+is not our policy here.
 
-## TL;DR
+## Read this first
 
-1. **Discuss first.** Open an issue (or a [Discussion](../../discussions)) and
-   wait for it to be labeled `ready-for-pr` before writing code.
-2. **Sign the CLA.** A bot will prompt you on your first PR. One signature
-   covers all future contributions.
-3. **Link the issue.** Put `Closes #123` in your PR description. A required
-   check enforces this.
-4. **Follow the style.** C17, no compiler warnings, formatted with
-   `clang-format`.
-5. **Comments** Comment your code with human words. Create Doxygen comments for public APIs.
-6. **Follow the LLM guidelines.** See the LLM guidelines in README.md
+fast3d is a test bed, not a library to ship. It exists to find out whether pointing
+[Claude Code](https://claude.com/claude-code) at a mature, carefully optimized physics
+engine turns up real speedups, and the answer so far is yes. Optimizations that hold up
+get ported back into Box3D, where they will be maintained and correct across platforms.
+The [README](README.md) says do not use this library, and means it.
 
----
+So an optimization you find here is worth more upstream than it is here. If your change is
+a genuine, portable, determinism-preserving win, consider raising it with
+[erincatto/box3d](https://github.com/erincatto/box3d/issues) as well. Bugs in Box3D
+itself, unrelated to the fast3d experiment, belong upstream there too.
 
-## 1. Discuss before you build
+Issues are turned off on this repository, deliberately: it is an experiment, not a
+supported library. A pull request is the way in, and its description and comments are the
+place to discuss it.
 
-Open an issue or discussion before creating a PR.
+## What a good contribution looks like here
 
-I will review the issue or discussion and apply the **`ready-for-pr`** label. Please don't open
-a PR until you get the label.
+Speed, measured. This fork trades cross-platform determinism for performance
+(`BOX3D_GO_FAST`, on by default), so the usual determinism constraint does not bind, but
+correctness does.
 
-Please wait follow this process. I don't want people wasting time writing a PR that won't be accepted.
+- Bring numbers. Say what you measured, on what hardware, with what compiler and build
+  type, and how many runs. `benchmark -t=4 -w=4 -r=2` is the shape the README uses. Note
+  that the benchmark CLI takes equals-form flags only (`-w=4`, not `-w 4`); a
+  space-separated flag is silently ignored, which quietly changes what you measured.
+- The full test suite has to pass. A speedup that changes results is a bug report, not an
+  optimization.
+- Say whether the win survives with `-DBOX3D_GO_FAST=OFF`. A win that only exists with
+  GO_FAST on is a different, smaller claim.
 
----
+## Opening a pull request
 
-## 2. Contributor License Agreement (CLA)
-
-Before your first contribution can be merged, you must sign the project's
-**Individual Contributor License Agreement**. When you open your first pull
-request, a bot will post a link; signing takes about a minute and covers all
-your future contributions.
-
-**What this means:** you retain the copyright to your contribution. The CLA
-grants the project maintainer a broad, perpetual, irrevocable license to use,
-modify, sublicense, and **relicense** your contribution. This lets the project
-adapt its licensing in the future (for example, offering a commercial edition)
-without having to track down every past contributor.
-
-If you're contributing on behalf of an employer, make sure you have the right
-to do so — some employment agreements assign your work to your employer, in
-which case a Corporate CLA may be required. Contact the maintainer if you're
-unsure.
-
-By submitting a contribution you also confirm that it is your original work and
-that you have the right to submit it under these terms.
-
----
-
-## 3. Opening a pull request
-
-Once your issue is labeled `ready-for-pr`:
-
-1. **Fork** the repository and create a branch from `main`:
+1. Fork the repository and branch from `main`.
+2. Keep the pull request to one logical change. If you find yourself touching unrelated
+   things, split them into separate pull requests.
+3. Say in the description what the change does and why.
+4. Build and test locally before you send it:
 
    ```bash
-   git checkout -b fix/short-description
+   ./build.sh
+   ./build/bin/test
    ```
 
-2. Make your change in small, focused commits.
-3. **Reference the issue** in your PR description using a closing keyword:
+   Then make sure CI is green on the pull request.
+5. Match the surrounding code. Library sources are C17, samples are C++20. The repository
+   ships a `.clang-format`; use it on code you add or edit. Please do not mass-reformat
+   files you are not otherwise changing, because it buries the real change.
 
-   ```text
-   Closes #(Issue Number)
-   ```
+## Contributor Assignment Agreement
 
-   A required status check parses this and will fail if no linked, approved
-   issue is found — the PR cannot be merged without it.
-4. Ensure the full test suite and CI pass.
-5. Fill out the PR template completely.
+Before your first contribution can be merged you need to sign the
+[Contributor Assignment Agreement](https://github.com/mas-bandwidth/.github/blob/main/CAA.md).
+A bot posts the link on your first pull request. Signing is one comment, it takes a
+minute, and it covers everything you contribute to any Más Bandwidth repository after
+that.
 
-Keep PRs scoped to a single logical change. If you find yourself touching
-unrelated things, split them into separate PRs (each with its own approved
-issue).
+Read it before you sign. It is a copyright assignment, a stronger grant than the license a
+CLA usually asks for: you assign copyright in your contribution to Más Bandwidth LLC, and
+you get back a perpetual license to use your own work for any purpose. We ask for it so
+these libraries can be relicensed in future without tracking down every past contributor
+for permission. If your contribution includes third-party material, identify it when you
+submit; that material stays under its own license.
 
----
+fast3d is MIT, the same as Box3D, and the Box3D-derived material stays MIT.
 
-## 4. Coding conventions
+## Credit
 
-Source files must be in C17. Samples use C++20. Please follow existing coding
-conventions and use clang format.
+Contributors keep their name in the commit history, and a change worth calling out gets
+called out. If your work gets ported upstream to Box3D, it goes with your name on it.
 
----
+## Questions
 
-## 5. Tests and documentation
-
-- Comment your code.
-- Public API must have Doxygen comments.
-
----
-
-## 6. LLM Policy
-
-- Follow the LLM policy in README.md
-
----
-
-## Questions?
-
-Open a [Discussion](../../discussions) — that's the best place for anything not
-covered here. Thanks for helping make Box3D better!
+Ask in the pull request. For anything about Box3D itself, upstream at
+[erincatto/box3d](https://github.com/erincatto/box3d/issues) is the better room.
