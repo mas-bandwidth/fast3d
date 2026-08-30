@@ -15,3 +15,4 @@ CMakeUserPresets.json
 *.b3rec
 Superluminal/
 build-dp/
+AGENTS.md
