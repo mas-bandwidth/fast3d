@@ -74,25 +74,12 @@ if (MSVC OR APPLE OR UNIX)
 	endif()
 endif()
 
-# Box3D uses -ffp-contract=off for cross platform determinism.
+# Deterministic math
 # https://box2d.org/posts/2024/08/determinism/
-# fast3d trades cross platform determinism for fused multiply-add.
-option(BOX3D_GO_FAST "Trade cross platform determinism for speed" ON)
-if (BOX3D_GO_FAST)
-	if (MINGW OR APPLE OR UNIX)
-		add_compile_options(-ffp-contract=fast)
-	endif()
-
-	# Link time optimization in release builds
-	include(CheckIPOSupported)
-	check_ipo_supported(RESULT BOX3D_IPO_SUPPORTED OUTPUT BOX3D_IPO_ERROR)
-	if (BOX3D_IPO_SUPPORTED)
-		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
-	endif()
 # Contraction into FMA is the one value changing transform enabled by default, and whether
 # it fires depends on the target. Test the compiler, not the platform, so every gcc and
 # clang gets the flag including a clang that is neither MinGW nor clang-cl.
-elseif (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 	if (CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
 		# clang-cl defaults to contraction on and silently drops the GNU spelling
 		add_compile_options(/clang:-ffp-contract=off)

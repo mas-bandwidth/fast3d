@@ -4,8 +4,9 @@
 so that the *determinism-preserving* findings — the ones that keep bit-identical
 cross-platform results, your hard requirement — can be handed back to Box3D with
 confidence. Every tip in "Easy wins for float Box3D" preserves determinism. Everything
-that relies on FMA / `-ffp-contract=fast` / float reassociation / fast-math is
-deliberately quarantined in the "fast3d-only" section and is **not** offered for Box3D.
+that relies on FMA / `-ffp-contract=fast` / float reassociation / fast-math was
+quarantined in the "fast3d-only" section and never offered for Box3D; since 2026-10-15
+fast3d does not ship any of it either.
 
 Two measurement machines, deliberately different ISAs so a win on one is tested on the other:
 
@@ -32,12 +33,19 @@ in float Box3D".)*
 
 ## fast3d-only optimizations
 *(these BREAK cross-platform determinism — FMA, `-ffp-contract=fast`, reassociation,
-fast-math, etc. Kept in the fork, never proposed for Box3D.)*
+fast-math, etc.)*
+
+**Closed 2026-10-15.** fast3d is deterministic across platforms and compilers now, so
+determinism-breaking work is no longer done here at all. The `BOX3D_GO_FAST` option below
+was removed, contraction is pinned off as in Box3D, and the det-breaking backlog items are
+closed with it. The list is kept as the record of what the fork once shipped. The three
+source changes in it are now upstream's (79fc559, adec25b) and fast3d uses Box3D's versions.
 
 Already shipped in the fork (from `git log`, not my work — recorded here so I don't redo them):
 
 - `-ffp-contract=fast` (fused multiply-add), gated on the `BOX3D_GO_FAST` CMake option
-  (default ON). This is the single biggest win and the reason determinism is off.
+  (default ON). This was the single biggest win across all scenes and the reason
+  determinism was off.
 - Link-time optimization in release when going fast.
 - Transposed body-state gathers in the contact solver (vector loads + 4x4 transpose).
 - NEON support-vertex scan, four vertices per iteration (`vld3q` deinterleave).
@@ -271,14 +279,16 @@ user. That guard (a CMake capability probe, plus deciding between `znver4` and t
    RETRACTED Night 2 — it was a 3-rep artifact on a bimodal scene; znver4 is actually -10%
    there. Remaining work is now item 2b below.**
 
-2b. **[det-breaking, build-system] Wire `-march=znver4` into `linux-release` under
-   `BOX3D_GO_FAST`, guarded.** Unconditional `-march=znver4` breaks the build for non-Zen4
+2b. **CLOSED 2026-10-15: det-breaking work is no longer done in fast3d.** Was:
+   [det-breaking, build-system] wire `-march=znver4` into `linux-release` under
+   `BOX3D_GO_FAST`, guarded. Unconditional `-march=znver4` breaks the build for non-Zen4
    x86 users, so this needs a CMake capability probe and a decision between `znver4` and the
    portable `x86-64-v3` as the default. Careful, self-contained night. Follow-on: `-mcpu=native`
    tuning on the M3 (same class of experiment, Apple side).
 
-3. **[det-breaking] 8-wide `b3FloatW8` (AVX2 `__m256`) path for the contact-solver constraint
-   batches on x86.** The solver processes constraints in groups of 4 (SIMD width). Widening
+3. **CLOSED 2026-10-15 as det-breaking.** Upstream's e77352c has since shipped AVX2 kernels
+   that give the same results as width 4. Was: [det-breaking] 8-wide `b3FloatW8` (AVX2
+   `__m256`) path for the contact-solver constraint batches on x86. The solver processes constraints in groups of 4 (SIMD width). Widening
    to 8 on AVX2 halves the batch count. Large, multi-night effort; changes reduction order →
    fork-only. Sequel to #2 once AVX2 is proven to help.
 
