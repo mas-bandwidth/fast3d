@@ -399,7 +399,11 @@ public:
 		hullPoints[numSegs] = b3Vec3_zero;
 		b3HullData* hull = b3CreateHull( hullPoints, numSegs + 1, numSegs + 1 );
 
+		// Capsule for testing alternate shapes. Keep this.
+		//b3Capsule capsule = {{0.0f, -0.6f, 0.0f}, {0.0f, 0.6f, 0.0f }, 0.4f};
+
 		b3ShapeDef shapeDef = b3DefaultShapeDef();
+		shapeDef.baseMaterial.rollingResistance = 0.1f;
 
 		// Tilt the top, then spin it about its own symmetry axis. Gravity does the rest.
 		b3Quat rotation = b3MakeQuatFromAxisAngle( b3Vec3_axisZ, 15.0f * B3_PI / 180.0f );
@@ -421,6 +425,8 @@ public:
 
 				b3BodyId bodyId = b3CreateBody( m_worldId, &bodyDef );
 				b3CreateHullShape( bodyId, &shapeDef, hull );
+
+				//b3CreateCapsuleShape( bodyId, &shapeDef, &capsule );
 
 				b3Body_SetAngularVelocity( bodyId, angularVelocity );
 
@@ -493,7 +499,7 @@ public:
 		b3Quat quat = b3Body_GetRotation( m_topId );
 		b3Vec3 axis = b3RotateVector( quat, b3Vec3_axisY );
 		b3Vec3 omega = b3Body_GetAngularVelocity( m_topId );
-		float spin = b3Dot( omega , axis );
+		float spin = b3Dot( omega, axis );
 		float cosTilt = b3ClampFloat( axis.y, -1.0f, 1.0f );
 		float expected = ExpectedRate( spin, cosTilt );
 
@@ -1180,3 +1186,150 @@ public:
 };
 
 static int sampleFixedRotation = RegisterSample( "Bodies", "Fixed Rotation", FixedRotation::Create );
+
+// A spinning class ring flips its heavy gem from bottom to top, like this video:
+// https://www.youtube.com/watch?v=_up0BiLCliA
+// This is a fiddley test and requires careful tuning.
+class ClassRing : public Sample
+{
+public:
+	explicit ClassRing( SampleContext* context )
+		: Sample( context )
+	{
+		if ( context->restart == false )
+		{
+			m_camera->SetView( 40.0f, 30.0f, 15.0f, { 0.0f, 2.0f, 0.0f } );
+		}
+
+		AddGroundBox( 100.0f );
+
+		constexpr int n = 24;
+		constexpr float r = 1.0f;
+		constexpr float tubeRadius = 0.1f * r;
+		constexpr float axisRadius = r - tubeRadius;
+
+		b3BodyDef bodyDef = b3DefaultBodyDef();
+		bodyDef.type = b3_dynamicBody;
+		bodyDef.position = { 0.0f, r, 0.0f };
+		bodyDef.rotation = b3MakeQuatFromAxisAngle( b3Vec3_axisX, 13.0f * B3_PI / 180.0f );
+		bodyDef.allowFastRotation = true;
+		bodyDef.enableContactRecycling = false;
+		b3BodyId bodyId = b3CreateBody( m_worldId, &bodyDef );
+
+		b3ShapeDef shapeDef = b3DefaultShapeDef();
+		shapeDef.density = 1.0f;
+
+		// Band built from a loop of capsules.
+		b3Vec3 vertices[n];
+		float deltaAngle = 2.0f * B3_PI / n;
+		b3CosSin cs = b3ComputeCosSin( deltaAngle );
+		float x = axisRadius, y = 0.0f;
+		for ( int i = 0; i < n; ++i )
+		{
+			vertices[i] = { x, y, 0.0f };
+			float x2 = cs.cosine * x - cs.sine * y;
+			float y2 = cs.sine * x + cs.cosine * y;
+			x = x2;
+			y = y2;
+		}
+
+		for ( int i = 0; i < n; ++i )
+		{
+			b3Capsule capsule = { vertices[i], vertices[( i + 1 ) % n], tubeRadius };
+			b3CreateCapsuleShape( bodyId, &shapeDef, &capsule );
+		}
+
+		// Heavy gem provides the mass asymmetry that drives the inversion
+		shapeDef.density = 2.0f;
+		b3Sphere sphere = { .center = { 0.0f, -0.65f * r, 0.0f }, .radius = 0.3f };
+		b3CreateSphereShape( bodyId, &shapeDef, &sphere );
+
+		b3Vec3 angularVelocity = b3RotateVector( bodyDef.rotation, { 0.0f, 100.0f, 0.0f } );
+		b3Body_SetAngularVelocity( bodyId, angularVelocity );
+
+		m_ringId = bodyId;
+	}
+
+	void Step() override
+	{
+		// This needs a high simulation rate so that contact points keep up with the high speed rotation.
+		float hertz = m_context->hertz;
+		int subStepCount = m_context->subStepCount;
+
+		// 960Hz simulation
+		int multiplier = 16;
+		m_context->hertz = multiplier * 60.0f;
+		m_context->subStepCount = 8;
+
+		// Multiple hidden steps to keep the render real-time.
+		for ( int i = 0; i < multiplier - 1; ++i )
+		{
+			b3World_Step( m_worldId, 1.0f / m_context->hertz, m_context->subStepCount );
+		}
+
+		Sample::Step();
+
+		m_context->hertz = hertz;
+		m_context->subStepCount = subStepCount;
+	}
+
+	static Sample* Create( SampleContext* context )
+	{
+		return new ClassRing( context );
+	}
+
+	b3BodyId m_ringId;
+};
+
+static int sampleClassRing = RegisterSample( "Bodies", "Class Ring", ClassRing::Create );
+
+/*
+mandude — 9:34 AM
+I've run into a minor, and admittedly pretty niche, issue with kinematic bodies. Because box3d will skip mass computations on
+kinematic bodies, the center of mass is never set. This means if the origin of a shape attached to the body isn't in the center of
+the shape, and you add an angular velocity, the shape will rotate about whatever the shape's origin is. For a simple example, if
+you have a cube as a mesh, with opposing corners at (0, 0, 0) and (1, 1, 1), rotation will happen about the corner of the cube.
+It's possible to work around this by calling setMassData with zero mass, a custom center of mass, and an identity matrix for the
+inertia tensor. That function tries to preserve momentum, so it can have unexpected effects on the velocity if the body is already
+moving, so perhaps it would be useful to have a more direct way to specify a custom offset for the origin of a kinematic body?
+ */
+class OffsetKinematic : public Sample
+{
+public:
+	explicit OffsetKinematic( SampleContext* context )
+		: Sample( context )
+	{
+		if ( m_context->restart == false )
+		{
+			m_camera->SetView( 0.0f, 30.0f, 10.0f, { 0.0f, 1.5f, 0.0f } );
+		}
+
+		AddGroundBox( 20.0f );
+
+		{
+			b3BodyDef bodyDef = b3DefaultBodyDef();
+			bodyDef.name = "kinematic";
+			bodyDef.type = b3_kinematicBody;
+			bodyDef.position.y = 3.0;
+			b3BodyId bodyId = b3CreateBody( m_worldId, &bodyDef );
+			b3Vec3 offset = { 0.5f, 0.5f, 1.0f };
+			b3BoxHull box = b3MakeTransformedBoxHull( 0.5f, 0.5f, 1.0f, { .p = offset, .q = b3Quat_identity} );
+			b3ShapeDef shapeDef = b3DefaultShapeDef();
+			b3CreateHullShape( bodyId, &shapeDef, &box.base );
+
+			b3MassData massData = b3Body_GetMassData( bodyId );
+			massData.center = offset;
+			b3Body_SetMassData( bodyId, massData );
+
+			b3Vec3 angularVelocity = {1.0f, -1.0f, 2.0f};
+			b3Body_SetAngularVelocity( bodyId, angularVelocity );
+		}
+	}
+
+	static Sample* Create( SampleContext* context )
+	{
+		return new OffsetKinematic( context );
+	}
+};
+
+static int sampleOffsetKinematic = RegisterSample( "Bodies", "Offset Kinematic", OffsetKinematic::Create );

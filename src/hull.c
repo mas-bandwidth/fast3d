@@ -3,15 +3,12 @@
 
 // Dirk Gregorius contributed portions of this code
 
+#include "hull.h"
+
 #include "algorithm.h"
-#include "hull_map.h"
 #include "math_internal.h"
 #include "shape.h"
 #include "simd.h"
-
-#if defined( B3_SIMD_NEON )
-#include <arm_neon.h>
-#endif
 
 #include "box3d/collision.h"
 #include "box3d/constants.h"
@@ -1631,78 +1628,67 @@ static float* b3GetHullSoaNormalsWrite( b3HullData* hull )
 	return (float*)( (intptr_t)hull + hull->soaNormalOffset );
 }
 
+static void b3UpdateHullEdgeCosines( b3HullData* hull )
+{
+	const b3HullHalfEdge* edges = b3GetHullEdges( hull );
+	const b3Plane* planes = b3GetHullPlanes( hull );
+	float* cosines = (float*)( (intptr_t)hull + hull->edgeCosineOffset );
+	int count = hull->edgeCount / 2;
+
+	for ( int i = 0; i < count; ++i )
+	{
+		cosines[i] = b3Dot( planes[edges[2 * i].face].normal, planes[edges[2 * i + 1].face].normal );
+	}
+}
+
 int b3FindHullSupportVertex( const b3HullData* hull, b3Vec3 direction )
 {
 	int bestIndex = B3_NULL_INDEX;
 	float bestDot = -FLT_MAX;
 
 	int vertexCount = hull->vertexCount;
-	const b3Vec3* points = b3GetHullPoints( hull );
+	const float* vx = b3GetHullSoaVertices( hull );
 
-#if defined( B3_SIMD_NEON )
-	// Test four vertices per iteration. vld3q de-interleaves the packed
-	// b3Vec3 array into x, y and z lanes. Ties may resolve to a different
-	// vertex than the scalar loop, which is an equally valid support point.
-	int count4 = vertexCount & ~3;
-	if ( count4 > 0 )
+	int soaVertexCount = b3GetHullSoaStride( vertexCount );
+	const float* vy = vx + soaVertexCount;
+	const float* vz = vy + soaVertexCount;
+
+	b3FloatW4 dx = b3SplatW4( direction.x );
+	b3FloatW4 dy = b3SplatW4( direction.y );
+	b3FloatW4 dz = b3SplatW4( direction.z );
+	b3FloatW4 four = b3SplatW4( 4.0f );
+	b3FloatW4 index = b3SetW4( 0.0f, 1.0f, 2.0f, 3.0f );
+	b3FloatW4 bestDotW = b3SplatW4( -FLT_MAX );
+	b3FloatW4 bestIndexW = b3SplatW4( -1.0f );
+
+	// Keep this at 4 wide to avoid regressing 4 wide platforms.
+	int loopCount = ( vertexCount + 3 ) & ~3;
+	for ( int i = 0; i < loopCount; i += 4 )
 	{
-		float32x4_t dx = vdupq_n_f32( direction.x );
-		float32x4_t dy = vdupq_n_f32( direction.y );
-		float32x4_t dz = vdupq_n_f32( direction.z );
+		b3FloatW4 dot = b3AddW4( b3AddW4( b3MulW4( dx, b3LoadW4( vx + i ) ), b3MulW4( dy, b3LoadW4( vy + i ) ) ),
+								 b3MulW4( dz, b3LoadW4( vz + i ) ) );
+		b3FloatW4 mask = b3GreaterThanW4( dot, bestDotW );
+		bestDotW = b3BlendW4( bestDotW, dot, mask );
+		bestIndexW = b3BlendW4( bestIndexW, index, mask );
+		index = b3AddW4( index, four );
+	}
 
-		float32x4_t bestDotV = vdupq_n_f32( -FLT_MAX );
-		uint32x4_t bestIndexV = vdupq_n_u32( 0 );
-		const uint32_t laneInit[4] = { 0, 1, 2, 3 };
-		uint32x4_t indexV = vld1q_u32( laneInit );
-		uint32x4_t fourV = vdupq_n_u32( 4 );
+	_Alignas( 16 ) float dots[4];
+	_Alignas( 16 ) float indices[4];
+	b3StoreW4( dots, bestDotW );
+	b3StoreW4( indices, bestIndexW );
 
-		for ( int index = 0; index < count4; index += 4 )
+	for ( int lane = 0; lane < 4; ++lane )
+	{
+		int laneIndex = (int)indices[lane];
+		if ( laneIndex >= 0 && ( dots[lane] > bestDot || ( dots[lane] == bestDot && laneIndex < bestIndex ) ) )
 		{
-			float32x4x3_t p = vld3q_f32( (const float*)( points + index ) );
-			float32x4_t dot = vfmaq_f32( vfmaq_f32( vmulq_f32( dx, p.val[0] ), dy, p.val[1] ), dz, p.val[2] );
-			uint32x4_t greater = vcgtq_f32( dot, bestDotV );
-			bestDotV = vbslq_f32( greater, dot, bestDotV );
-			bestIndexV = vbslq_u32( greater, indexV, bestIndexV );
-			indexV = vaddq_u32( indexV, fourV );
-		}
-
-		float dots[4];
-		uint32_t indices[4];
-		vst1q_f32( dots, bestDotV );
-		vst1q_u32( indices, bestIndexV );
-
-		for ( int lane = 0; lane < 4; ++lane )
-		{
-			if ( dots[lane] > bestDot )
-			{
-				bestDot = dots[lane];
-				bestIndex = (int)indices[lane];
-			}
+			bestIndex = laneIndex;
+			bestDot = dots[lane];
 		}
 	}
 
-	for ( int index = count4; index < vertexCount; ++index )
-	{
-		float dot = b3Dot( direction, points[index] );
-		if ( dot > bestDot )
-		{
-			bestIndex = index;
-			bestDot = dot;
-		}
-	}
-#else
-	for ( int index = 0; index < vertexCount; ++index )
-	{
-		float dot = b3Dot( direction, points[index] );
-		if ( dot > bestDot )
-		{
-			bestIndex = index;
-			bestDot = dot;
-		}
-	}
-#endif
-	B3_ASSERT( bestIndex >= 0 );
-
+	B3_ASSERT( 0 <= bestIndex && bestIndex < vertexCount );
 	return bestIndex;
 }
 
@@ -1949,6 +1935,51 @@ b3HullData* b3CreateRock( float radius )
 	return b3CreateHull( points, pointCount, pointCount );
 }
 
+// PEEL's BasicRandom. This is just for testing.
+static uint32_t b3NextComplexHullRandom( uint32_t* state )
+{
+	*state = *state * 2147001325u + 715136305u;
+	return *state;
+}
+
+static float b3ComplexHullRandomFloat( uint32_t* state )
+{
+	return (float)( b3NextComplexHullRandom( state ) & 0xffff ) / 65535.0f - 0.5f;
+}
+
+static b3Vec3 b3ComplexHullRandomDirection( uint32_t* state )
+{
+	b3Vec3 point;
+	float lengthSquared;
+	do
+	{
+		point.x = b3ComplexHullRandomFloat( state );
+		point.y = b3ComplexHullRandomFloat( state );
+		point.z = b3ComplexHullRandomFloat( state );
+		lengthSquared = b3Dot( point, point );
+	}
+	while ( lengthSquared > 0.25f );
+
+	return b3Normalize( point );
+}
+
+b3HullData* b3CreateComplexHull( float radius )
+{
+	enum
+	{
+		pointCount = 32
+	};
+
+	b3Vec3 points[pointCount];
+	uint32_t state = 42;
+	for ( int i = 0; i < pointCount; ++i )
+	{
+		points[i] = b3MulSV( radius, b3ComplexHullRandomDirection( &state ) );
+	}
+
+	return b3CreateHull( points, pointCount, pointCount );
+}
+
 static void b3UpdateHullBounds( b3HullData* hull )
 {
 	const b3Vec3* points = b3GetHullPoints( hull );
@@ -2189,8 +2220,8 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 		while ( edge != face->edge );
 	}
 
-	int soaVertexCount = ( vertexCount + 3 ) & ~3;
-	int soaNormalCount = ( faceCount + 3 ) & ~3;
+	int soaVertexCount = b3GetHullSoaStride( vertexCount );
+	int soaNormalCount = b3GetHullSoaStride( faceCount );
 
 	// Allocate the hull. Arrays hang off the end.
 	size_t byteCount = b3AlignUp8( sizeof( b3HullData ) );
@@ -2208,6 +2239,8 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	byteCount += b3AlignUp8( 3 * soaVertexCount * (int)sizeof( float ) );
 	int soaNormalOffset = (int)byteCount;
 	byteCount += b3AlignUp8( 3 * soaNormalCount * (int)sizeof( float ) );
+	int edgeCosineOffset = (int)byteCount;
+	byteCount += b3AlignUp8( ( edgeCount / 2 ) * (int)sizeof( float ) );
 
 	b3HullData* hull = b3Alloc( byteCount );
 	memset( hull, 0, byteCount );
@@ -2220,6 +2253,7 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	hull->faceOffset = faceOffset;
 	hull->soaVertexOffset = soaVertexOffset;
 	hull->soaNormalOffset = soaNormalOffset;
+	hull->edgeCosineOffset = edgeCosineOffset;
 
 	hull->vertexCount = vertexCount;
 	hull->edgeCount = edgeCount;
@@ -2301,6 +2335,8 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	// All builder pointers are dead from here on.
 	b3Free( work, sizes.totalBytes );
 
+	b3UpdateHullEdgeCosines( hull );
+
 	b3UpdateHullBounds( hull );
 	bool success = b3UpdateHullBulkProperties( hull );
 	if ( success == false )
@@ -2316,7 +2352,7 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	}
 
 	hull->hash = 0;
-	hull->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (uint8_t*)hull, hull->byteCount ) );
+	hull->hash = b3Hash64NonZero( (uint8_t*)hull, hull->byteCount );
 
 	return hull;
 }
@@ -2328,7 +2364,7 @@ b3HullData* b3CloneHull( const b3HullData* hull )
 		return NULL;
 	}
 
-	b3HullData* clone = (b3HullData*)b3Alloc( hull->byteCount );
+	b3HullData* clone = b3Alloc( hull->byteCount );
 	memcpy( clone, hull, hull->byteCount );
 
 	return clone;
@@ -2336,9 +2372,7 @@ b3HullData* b3CloneHull( const b3HullData* hull )
 
 uint64_t b3HashHullData( const b3HullData* hull )
 {
-	// The baked content hash already covers byteCount. Spread the 32 bits across 64 so the table
-	// can use the high bits for its fast reject fragment.
-	return (uint64_t)hull->hash * 0x9E3779B97F4A7C15ull;
+	return hull->hash;
 }
 
 bool b3CompareHullData( const b3HullData* hull1, const b3HullData* hull2 )
@@ -2358,9 +2392,10 @@ bool b3CompareHullData( const b3HullData* hull1, const b3HullData* hull2 )
 
 // Hull identity covers every byte, so the structs carry explicit padding. These lock
 // the layout, re-audit padding if a size changes.
-_Static_assert( sizeof( b3HullData ) == 144, "unexpected hull data size" );
-_Static_assert( sizeof( b3BoxHull ) == 648, "unexpected box hull size" );
+_Static_assert( sizeof( b3HullData ) == 152, "unexpected hull data size" );
+_Static_assert( sizeof( b3BoxHull ) == 696, "unexpected box hull size" );
 
+// Implement b3HullMap.
 #define NAME b3HullMap
 #define KEY_TY const b3HullData*
 #define VAL_TY int
@@ -2459,7 +2494,7 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 	b3Matrix3 matrix = b3MakeMatrixFromQuat( transform.q );
 	b3Vec3* points = b3GetHullPointsWrite( hull );
 
-	int soaVertexCount = ( vertexCount + 3 ) & ~3;
+	int soaVertexCount = b3GetHullSoaStride( vertexCount );
 	float* vx = b3GetHullSoaVerticesWrite( hull );
 	float* vy = vx + soaVertexCount;
 	float* vz = vy + soaVertexCount;
@@ -2481,7 +2516,7 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 	}
 
 	b3Plane* planes = b3GetHullPlanesWrite( hull );
-	int soaNormalCount = ( faceCount + 3 ) & ~3;
+	int soaNormalCount = b3GetHullSoaStride( faceCount );
 	float* nx = b3GetHullSoaNormalsWrite( hull );
 	float* ny = nx + soaNormalCount;
 	float* nz = ny + soaNormalCount;
@@ -2543,6 +2578,8 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 		nz[i] = 0.0f;
 	}
 
+	b3UpdateHullEdgeCosines( hull );
+
 	b3UpdateHullBounds( hull );
 	bool success = b3UpdateHullBulkProperties( hull );
 	if ( success == false )
@@ -2551,8 +2588,9 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 		return NULL;
 	}
 
+	// Must ensure the hash is 0 so it doesn't contribute to itself.
 	hull->hash = 0;
-	hull->hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (uint8_t*)hull, hull->byteCount ) );
+	hull->hash = b3Hash64NonZero( (uint8_t*)hull, hull->byteCount );
 
 	B3_VALIDATE( b3IsValidHull( hull ) );
 
@@ -2712,7 +2750,7 @@ int b3CollideMoverAndHull( b3PlaneResult* result, const b3HullData* shape, const
 	if ( distanceOutput.distance <= totalRadius )
 	{
 		b3Plane plane = { distanceOutput.normal, totalRadius - distanceOutput.distance };
-		*result = (b3PlaneResult){ plane, distanceOutput.pointA };
+		*result = (b3PlaneResult){ plane, distanceOutput.pointA, 0, 0, 0 };
 		return 1;
 	}
 
@@ -2796,6 +2834,7 @@ static const b3BoxHull s_boxHull = {
 			.faceOffset = offsetof( b3BoxHull, boxFaces ),
 			.soaVertexOffset = offsetof( b3BoxHull, vx ),
 			.soaNormalOffset = offsetof( b3BoxHull, nx ),
+			.edgeCosineOffset = offsetof( b3BoxHull, edgeCosines ),
 		},
 	.boxVertices =
 		{
@@ -2830,6 +2869,8 @@ static const b3BoxHull s_boxHull = {
 
 b3BoxHull b3MakeTransformedBoxHull( float hx, float hy, float hz, b3Transform transform )
 {
+	B3_ASSERT( b3IsValidTransform( transform ) );
+
 	b3BoxHull boxHull = s_boxHull;
 
 	float minH = 0.2f * B3_LINEAR_SLOP;
@@ -2918,8 +2959,9 @@ b3BoxHull b3MakeTransformedBoxHull( float hx, float hy, float hz, b3Transform tr
 	boxHull.nz[6] = 0.0f;
 	boxHull.nz[7] = 0.0f;
 
+	// Must ensure the hash is 0 so it doesn't contribute to itself.
 	boxHull.base.hash = 0;
-	boxHull.base.hash = b3NonZeroHash( b3Hash( B3_HASH_INIT, (uint8_t*)&boxHull, sizeof( b3BoxHull ) ) );
+	boxHull.base.hash = b3Hash64NonZero( (uint8_t*)&boxHull.base, boxHull.base.byteCount );
 
 	return boxHull;
 }
@@ -2992,8 +3034,193 @@ void b3ScaleBox( b3Vec3* halfWidths, b3Transform* transform, b3Vec3 postScale, f
 // todo use new hull scaling technique
 b3BoxHull b3MakeScaledBoxHull( b3Vec3 halfWidths, b3Transform transform, b3Vec3 postScale )
 {
+	B3_ASSERT( b3IsValidTransform( transform ) );
+
 	b3Vec3 h = halfWidths;
 	b3Transform xf = transform;
 	b3ScaleBox( &h, &xf, postScale, 4.0f * B3_LINEAR_SLOP );
 	return b3MakeTransformedBoxHull( h.x, h.y, h.z, xf );
+}
+
+// 2D hull (Andrew's monotone chain)
+
+// cross(b - a, c - a)
+static inline float b3Cross2D( b3Vec2 a, b3Vec2 b, b3Vec2 c )
+{
+	return ( b.x - a.x ) * ( c.y - a.y ) - ( b.y - a.y ) * ( c.x - a.x );
+}
+
+// Iteratively remove the vertices contributing the least area.
+int b3SimplifyHull2D( b3Point2D* hull, int count1, int target )
+{
+	B3_ASSERT( target >= 3 );
+
+	if ( count1 <= 3 )
+	{
+		return count1;
+	}
+
+	float linearSlop = B3_LINEAR_SLOP;
+	float areaTol = 0.25f * linearSlop * linearSlop;
+	int count2 = count1;
+
+	for ( ;; )
+	{
+		float minArea = FLT_MAX;
+		int minIndex = 0;
+
+		for ( int i = 0; i < count2; i++ )
+		{
+			int prev = ( i + count2 - 1 ) % count2;
+			int next = ( i + 1 ) % count2;
+			float area = b3Cross2D( hull[prev].p, hull[i].p, hull[next].p );
+			B3_VALIDATE( area >= -FLT_EPSILON );
+
+			if ( area + areaTol < minArea )
+			{
+				minArea = area;
+				minIndex = i;
+			}
+		}
+
+		if ( count2 <= 3 || ( minArea > areaTol && count2 <= target ) )
+		{
+			break;
+		}
+
+		count2 -= 1;
+		if ( minIndex < count2 )
+		{
+			memmove( hull + minIndex, hull + ( minIndex + 1 ), ( count2 - minIndex ) * sizeof( b3Point2D ) );
+		}
+	}
+
+	return count2;
+}
+
+// Sort comparator: by x, then by y. Insertion since n is typically 20 or less.
+static void b3Sort2D( b3Point2D* pts, int count )
+{
+	for ( int i = 1; i < count; ++i )
+	{
+		b3Point2D base = pts[i];
+		int j = i - 1;
+		while ( j >= 0 && ( pts[j].p.x > base.p.x || ( pts[j].p.x == base.p.x && pts[j].p.y > base.p.y ) ) )
+		{
+			pts[j + 1] = pts[j];
+			j -= 1;
+		}
+		pts[j + 1] = base;
+	}
+}
+
+// Welds points that have been sorted O(n) time
+static int b3Weld2D( b3Point2D* pts, int count1 )
+{
+	if ( count1 <= 1 )
+	{
+		return count1;
+	}
+
+	float linearSlop = 0.25f * B3_LINEAR_SLOP;
+	float tolSqr = linearSlop * linearSlop;
+
+	int count2 = 1;
+	int baseIndex = 0;
+	for ( int i = 1; i < count1; i++ )
+	{
+		float distanceSqr = b3DistanceSquared2( pts[i].p, pts[baseIndex].p );
+		if ( distanceSqr < tolSqr )
+		{
+			if ( pts[i].originalIndex < pts[baseIndex].originalIndex )
+			{
+				pts[baseIndex] = pts[i];
+			}
+		}
+		else
+		{
+			pts[count2] = pts[i];
+			baseIndex = count2;
+			count2 += 1;
+		}
+	}
+
+	return count2;
+}
+
+// Andrew's monotone chain convex hull algorithm
+// hull must have space for 2 * count1 points
+int b3Hull2D( b3Point2D* pts, int count, b3Point2D* hull )
+{
+	int count1 = count;
+
+	if ( count1 <= 0 )
+	{
+		return 0;
+	}
+
+	if ( count1 == 1 )
+	{
+		hull[0] = pts[0];
+		return 1;
+	}
+
+	b3Sort2D( pts, count1 );
+	count1 = b3Weld2D( pts, count1 );
+
+	if ( count1 == 1 )
+	{
+		hull[0] = pts[0];
+		return 1;
+	}
+
+	if ( count1 == 2 )
+	{
+		hull[0] = pts[0];
+		hull[1] = pts[1];
+		return 2;
+	}
+
+	int count2 = 0;
+
+	for ( int i = 0; i < count1; i++ )
+	{
+		while ( count2 >= 2 )
+		{
+			float area = b3Cross2D( hull[count2 - 2].p, hull[count2 - 1].p, pts[i].p );
+			if ( area > 0.0f )
+			{
+				break;
+			}
+
+			count2 -= 1;
+		}
+
+		B3_VALIDATE( count2 < 2 * count1 );
+		hull[count2] = pts[i];
+		count2 += 1;
+	}
+
+	int lowerCount = count2 + 1;
+
+	for ( int i = count1 - 2; i >= 0; i-- )
+	{
+		while ( count2 >= lowerCount )
+		{
+			float area = b3Cross2D( hull[count2 - 2].p, hull[count2 - 1].p, pts[i].p );
+			if ( area > 0.0f )
+			{
+				break;
+			}
+
+			count2 -= 1;
+		}
+
+		B3_VALIDATE( count2 < 2 * count1 );
+		hull[count2] = pts[i];
+		count2 += 1;
+	}
+
+	B3_VALIDATE( hull[0].originalIndex == hull[count2 - 1].originalIndex );
+	return count2 - 1;
 }

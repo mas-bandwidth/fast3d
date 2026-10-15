@@ -565,6 +565,108 @@ static int TestWheelJoint( void )
 	return FinishJoint( jointId, f.worldId );
 }
 
+// Issue #117: a joint created with collideConnected false must clear contacts
+// that already exist between the two bodies.
+static int TestCreateJointClearsContacts( void )
+{
+	b3WorldDef worldDef = b3DefaultWorldDef();
+	worldDef.gravity = b3Vec3_zero;
+	b3WorldId worldId = b3CreateWorld( &worldDef );
+
+	b3BodyDef bodyDef = b3DefaultBodyDef();
+	bodyDef.type = b3_dynamicBody;
+
+	bodyDef.position = (b3Pos){ 0.0f, 0.0f, 0.0f };
+	b3BodyId bodyIdA = b3CreateBody( worldId, &bodyDef );
+
+	// Overlapping so a touching contact forms
+	bodyDef.position = (b3Pos){ 0.5f, 0.0f, 0.0f };
+	b3BodyId bodyIdB = b3CreateBody( worldId, &bodyDef );
+
+	b3ShapeDef shapeDef = b3DefaultShapeDef();
+	shapeDef.density = 1.0f;
+	b3BoxHull box = b3MakeBoxHull( 0.5f, 0.5f, 0.5f );
+	b3CreateHullShape( bodyIdA, &shapeDef, &box.base );
+	b3CreateHullShape( bodyIdB, &shapeDef, &box.base );
+
+	b3World_Step( worldId, 1.0f / 60.0f, 4 );
+	ENSURE( b3Body_GetContactCapacity( bodyIdA ) > 0 );
+
+	b3RevoluteJointDef jointDef = b3DefaultRevoluteJointDef();
+	jointDef.base.bodyIdA = bodyIdA;
+	jointDef.base.bodyIdB = bodyIdB;
+	jointDef.base.collideConnected = false;
+	b3CreateRevoluteJoint( worldId, &jointDef );
+
+	ENSURE( b3Body_GetContactCapacity( bodyIdA ) == 0 );
+	ENSURE( b3Body_GetContactCapacity( bodyIdB ) == 0 );
+
+	b3World_Step( worldId, 1.0f / 60.0f, 4 );
+	ENSURE( b3Body_GetContactCapacity( bodyIdA ) == 0 );
+
+	b3DestroyWorld( worldId );
+	return 0;
+}
+
+// Issue #164: a joint with no dynamic body lives in the static set even when one body is an awake
+// kinematic. Disabling and enabling that body has to respect this, whether the joint was created
+// that way or got there through body type changes.
+static int TestNonDynamicJointDisable( void )
+{
+	b3WorldDef worldDef = b3DefaultWorldDef();
+	worldDef.gravity = b3Vec3_zero;
+	b3WorldId worldId = b3CreateWorld( &worldDef );
+
+	b3BodyDef bodyDef = b3DefaultBodyDef();
+	bodyDef.type = b3_dynamicBody;
+	b3BodyId bodyIdA = b3CreateBody( worldId, &bodyDef );
+	bodyDef.position = (b3Pos){ 2.0f, 0.0f, 0.0f };
+	b3BodyId bodyIdB = b3CreateBody( worldId, &bodyDef );
+
+	b3ShapeDef shapeDef = b3DefaultShapeDef();
+	b3BoxHull box = b3MakeCubeHull( 0.5f );
+	b3CreateHullShape( bodyIdA, &shapeDef, &box.base );
+	b3CreateHullShape( bodyIdB, &shapeDef, &box.base );
+
+	b3WeldJointDef jointDef = b3DefaultWeldJointDef();
+	jointDef.base.bodyIdA = bodyIdA;
+	jointDef.base.bodyIdB = bodyIdB;
+	b3JointId weldId = b3CreateWeldJoint( worldId, &jointDef );
+
+	b3Body_SetType( bodyIdA, b3_staticBody );
+	b3Body_SetType( bodyIdB, b3_kinematicBody );
+	b3World_Step( worldId, 1.0f / 60.0f, 4 );
+
+	b3Body_Disable( bodyIdB );
+	b3World_Step( worldId, 1.0f / 60.0f, 4 );
+	b3Body_Enable( bodyIdB );
+	b3World_Step( worldId, 1.0f / 60.0f, 4 );
+	ENSURE( b3Joint_IsValid( weldId ) );
+
+	b3Body_SetType( bodyIdB, b3_dynamicBody );
+	b3World_Step( worldId, 1.0f / 60.0f, 4 );
+	ENSURE( b3Joint_IsAwake( weldId ) );
+
+	// Created directly between a static and a kinematic body
+	bodyDef.type = b3_kinematicBody;
+	bodyDef.position = (b3Pos){ 4.0f, 0.0f, 0.0f };
+	b3BodyId bodyIdC = b3CreateBody( worldId, &bodyDef );
+	b3CreateHullShape( bodyIdC, &shapeDef, &box.base );
+
+	b3RevoluteJointDef revoluteDef = b3DefaultRevoluteJointDef();
+	revoluteDef.base.bodyIdA = bodyIdA;
+	revoluteDef.base.bodyIdB = bodyIdC;
+	b3JointId revoluteId = b3CreateRevoluteJoint( worldId, &revoluteDef );
+
+	b3Body_Disable( bodyIdC );
+	b3Body_Enable( bodyIdC );
+	b3World_Step( worldId, 1.0f / 60.0f, 4 );
+	ENSURE( b3Joint_IsAwake( revoluteId ) == false );
+
+	b3DestroyWorld( worldId );
+	return 0;
+}
+
 int JointTest( void )
 {
 	RUN_SUBTEST( TestParallelJoint );
@@ -576,6 +678,8 @@ int JointTest( void )
 	RUN_SUBTEST( TestSphericalJoint );
 	RUN_SUBTEST( TestWeldJoint );
 	RUN_SUBTEST( TestWheelJoint );
+	RUN_SUBTEST( TestCreateJointClearsContacts );
+	RUN_SUBTEST( TestNonDynamicJointDisable );
 
 	return 0;
 }

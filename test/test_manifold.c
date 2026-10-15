@@ -10,6 +10,11 @@
 #include <float.h>
 #include <math.h>
 
+// A face contact keeps the whole clipped polygon when the manifold has room for it, so a build
+// with a larger B3_MAX_MANIFOLD_POINTS legitimately reports more than four points. At the default
+// this is still an exact count.
+#define ENSURE_FACE_POINTS( count ) ENSURE( 4 <= ( count ) && ( count ) <= B3_MAX_MANIFOLD_POINTS )
+
 static const float kRoot2 = 1.41421356f;
 static const float kHalfRoot2 = 0.70710678f;
 
@@ -45,6 +50,11 @@ static void MakeCrossedEdgeHulls( b3BoxHull* hullA, b3BoxHull* hullB, float half
 static b3Transform SlideX( float x )
 {
 	return (b3Transform){ { x, 0.0f, 0.0f }, b3Quat_identity };
+}
+
+static b3Transform SlideY( float y )
+{
+	return (b3Transform){ { 0.0f, y, 0.0f }, b3Quat_identity };
 }
 
 static float MinSeparation( const b3LocalManifold* manifold )
@@ -270,7 +280,7 @@ static int ParallelEdgeTest( void )
 			b3SATCache cache = { 0 };
 			b3CollideHulls( &manifold, 8, &hullA.base, &hullB.base, transform, &cache );
 
-			ENSURE( manifold.pointCount == 4 );
+			ENSURE_FACE_POINTS( manifold.pointCount );
 			ENSURE( cache.type == b3_faceAxisA || cache.type == b3_faceAxisB );
 			ENSURE( b3Dot( manifold.normal, kAxisY ) > 0.998f );
 
@@ -488,7 +498,7 @@ static int TriangleParallelEdgeTest( void )
 			b3SATCache cache = { 0 };
 			b3CollideTriangleAndHull( &manifold, 8, v1, v2, v3, 0, &hull.base, &cache, true );
 
-			ENSURE( manifold.pointCount == 4 );
+			ENSURE_FACE_POINTS( manifold.pointCount );
 			ENSURE( cache.type == b3_faceAxisA );
 			ENSURE( b3Dot( manifold.normal, kAxisY ) > 0.99f );
 
@@ -505,7 +515,7 @@ static int TriangleParallelEdgeTest( void )
 // separation can be no deeper than root2 times the vertical overlap.
 static int CheckRoofFaceContact( const b3LocalManifold* manifold, const b3SATCache* cache, float overlap )
 {
-	ENSURE( manifold->pointCount == 4 );
+	ENSURE_FACE_POINTS( manifold->pointCount );
 	ENSURE( cache->type == b3_faceAxisA || cache->type == b3_faceAxisB );
 
 	// A roof face of one hull, so 45 degrees off the vertical
@@ -1117,8 +1127,252 @@ static int CapsuleHullSeamTest( void )
 	return 0;
 }
 
+// A capsule core straddling a triangle face inside the interior. The core pierces the plane so the
+// deep path runs, and with the tilt kept small the face stays the axis of minimum penetration, so the
+// clip must return two points on the triangle face. This is the branch that had no coverage.
+static int CapsuleTriangleFaceDeepTest( void )
+{
+	// Triangle in the y = 0 plane, normal +y, centroid at the origin
+	b3Vec3 v1 = { -3.0f, 0.0f, -2.0f };
+	b3Vec3 v2 = { 0.0f, 0.0f, 4.0f };
+	b3Vec3 v3 = { 3.0f, 0.0f, -2.0f };
+	b3Vec3 triangle[] = { v1, v2, v3 };
+
+	float yaws[] = { 0.0f, 0.6f, 1.2f, 1.8f, 2.4f };
+	float tilts[] = { 0.06f, 0.1f, 0.15f };
+	float radii[] = { 0.05f, 0.1f, 0.2f };
+
+	// Bias the center just above the plane so the back side cull passes while the lower endpoint dips through
+	float bias = 0.01f;
+	float halfLength = 1.0f;
+
+	int faceContacts = 0;
+
+	for ( int i = 0; i < ARRAY_COUNT( yaws ); ++i )
+	{
+		for ( int j = 0; j < ARRAY_COUNT( tilts ); ++j )
+		{
+			for ( int r = 0; r < ARRAY_COUNT( radii ); ++r )
+			{
+				// Axis is the in-plane heading tipped up so the segment straddles the plane
+				b3Vec3 axis = { cosf( tilts[j] ) * cosf( yaws[i] ), sinf( tilts[j] ), cosf( tilts[j] ) * sinf( yaws[i] ) };
+				b3Vec3 center = { 0.0f, bias, 0.0f };
+				b3Vec3 c1 = b3MulAdd( center, -halfLength, axis );
+				b3Vec3 c2 = b3MulAdd( center, halfLength, axis );
+				b3Capsule capsule = { c1, c2, radii[r] };
+
+				b3LocalManifoldPoint points[8];
+				b3LocalManifold manifold = { 0 };
+				manifold.points = points;
+				b3SimplexCache cache = { 0 };
+				b3CollideTriangleAndCapsule( &manifold, 8, triangle, &capsule, &cache );
+
+				// Two points on the triangle face with the plane normal
+				ENSURE( manifold.pointCount == 2 );
+				ENSURE( manifold.feature == b3_featureTriangleFace );
+				ENSURE_SMALL( manifold.normal.x, 1e-5f );
+				ENSURE_SMALL( manifold.normal.y - 1.0f, 1e-5f );
+				ENSURE_SMALL( manifold.normal.z, 1e-5f );
+
+				// Separations are the endpoint heights pulled in by the radius. The lower endpoint is below
+				// the plane, so the deepest separation is negative.
+				float lower = b3MinFloat( c1.y, c2.y ) - radii[r];
+				float upper = b3MaxFloat( c1.y, c2.y ) - radii[r];
+				float minSep = b3MinFloat( manifold.points[0].separation, manifold.points[1].separation );
+				float maxSep = b3MaxFloat( manifold.points[0].separation, manifold.points[1].separation );
+				ENSURE_SMALL( minSep - lower, 1e-5f );
+				ENSURE_SMALL( maxSep - upper, 1e-5f );
+				ENSURE( minSep < 0.0f );
+
+				++faceContacts;
+			}
+		}
+	}
+
+	// Every configuration must reach the face path
+	ENSURE( faceContacts == ARRAY_COUNT( yaws ) * ARRAY_COUNT( tilts ) * ARRAY_COUNT( radii ) );
+
+	return 0;
+}
+
+// A capsule laid flat with its core below a box top face. The core sits inside the box so the deep
+// path runs, and across a sweep of depths, headings and radii the face clip must return two points.
+static int HullCapsuleFaceDeepTest( void )
+{
+	b3BoxHull hull = b3MakeBoxHull( 0.5f, 0.5f, 0.5f );
+
+	float depths[] = { 0.1f, 0.2f, 0.3f, 0.4f, 0.45f };
+	float yaws[] = { 0.0f, 0.4f, 0.8f, 1.2f };
+	float radii[] = { 0.1f, 0.15f, 0.2f };
+	float offsets[] = { -0.1f, 0.0f, 0.1f };
+	float halfLength = 0.3f;
+
+	int faceContacts = 0;
+
+	for ( int i = 0; i < ARRAY_COUNT( depths ); ++i )
+	{
+		for ( int j = 0; j < ARRAY_COUNT( yaws ); ++j )
+		{
+			for ( int r = 0; r < ARRAY_COUNT( radii ); ++r )
+			{
+				for ( int o = 0; o < ARRAY_COUNT( offsets ); ++o )
+				{
+					float y = depths[i];
+					b3Vec3 dir = { cosf( yaws[j] ), 0.0f, sinf( yaws[j] ) };
+					b3Vec3 center = { offsets[o], y, 0.0f };
+					b3Vec3 c1 = b3MulAdd( center, -halfLength, dir );
+					b3Vec3 c2 = b3MulAdd( center, halfLength, dir );
+					b3Capsule capsule = { c1, c2, radii[r] };
+
+					b3LocalManifoldPoint points[8];
+					b3LocalManifold manifold = { 0 };
+					manifold.points = points;
+					b3SimplexCache cache = { 0 };
+					b3CollideHullAndCapsule( &manifold, 8, &hull.base, &capsule, b3Transform_identity, &cache );
+
+					// Two points on the top face. The hull path does not tag a feature, so the face is
+					// identified by the normal and the point count.
+					ENSURE( manifold.pointCount == 2 );
+					ENSURE_SMALL( manifold.normal.x, 1e-5f );
+					ENSURE_SMALL( manifold.normal.y - 1.0f, 1e-5f );
+					ENSURE_SMALL( manifold.normal.z, 1e-5f );
+
+					// Flat capsule, so both points sit at the same analytic gap
+					float expected = ( y - 0.5f ) - radii[r];
+					ENSURE_SMALL( manifold.points[0].separation - expected, 1e-5f );
+					ENSURE_SMALL( manifold.points[1].separation - expected, 1e-5f );
+					ENSURE( expected < 0.0f );
+
+					++faceContacts;
+				}
+			}
+		}
+	}
+
+	ENSURE( faceContacts == ARRAY_COUNT( depths ) * ARRAY_COUNT( yaws ) * ARRAY_COUNT( radii ) * ARRAY_COUNT( offsets ) );
+
+	return 0;
+}
+
+static int CheckSpeculativePoints( const b3LocalManifold* manifold, float gap )
+{
+	ENSURE( manifold->pointCount > 0 );
+	ENSURE_SMALL( MinSeparation( manifold ) - gap, 1e-4f );
+	return 0;
+}
+
+// Contact recycling treats a pair without points as separated by at least the speculative distance.
+// Every manifold routine must report a pair inside that distance or recycling can skip real overlap.
+// Discussion #175.
+static int SpeculativeMarginTest( void )
+{
+	float gaps[] = { 0.0f, 0.25f * B3_SPECULATIVE_DISTANCE, 0.75f * B3_SPECULATIVE_DISTANCE };
+	int gapCount = sizeof( gaps ) / sizeof( gaps[0] );
+
+	b3Sphere sphere = { b3Vec3_zero, 0.25f };
+	b3Sphere bigSphere = { b3Vec3_zero, 0.5f };
+	b3Capsule capsuleX = { { -0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.25f };
+	b3Capsule capsuleZ = { { 0.0f, 0.0f, -0.5f }, { 0.0f, 0.0f, 0.5f }, 0.25f };
+	b3BoxHull box = b3MakeBoxHull( 0.5f, 0.5f, 0.5f );
+
+	// Normal is +y
+	b3Vec3 triangle[3] = { { -2.0f, 0.0f, -2.0f }, { 0.0f, 0.0f, 2.0f }, { 2.0f, 0.0f, -2.0f } };
+
+	b3LocalManifoldPoint points[B3_MAX_MANIFOLD_POINTS];
+	b3LocalManifold manifold = { 0 };
+	manifold.points = points;
+
+	for ( int i = 0; i < gapCount; ++i )
+	{
+		float gap = gaps[i];
+
+		manifold.pointCount = 0;
+		b3CollideSpheres( &manifold, B3_MAX_MANIFOLD_POINTS, &bigSphere, &sphere, SlideY( 0.75f + gap ) );
+		ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+
+		manifold.pointCount = 0;
+		b3CollideCapsuleAndSphere( &manifold, B3_MAX_MANIFOLD_POINTS, &capsuleX, &sphere, SlideY( 0.5f + gap ) );
+		ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+
+		manifold.pointCount = 0;
+		b3CollideCapsules( &manifold, B3_MAX_MANIFOLD_POINTS, &capsuleX, &capsuleZ, SlideY( 0.5f + gap ) );
+		ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+
+		{
+			manifold.pointCount = 0;
+			b3SimplexCache cache = { 0 };
+			b3CollideHullAndSphere( &manifold, B3_MAX_MANIFOLD_POINTS, &box.base, &sphere, SlideY( 0.75f + gap ), &cache );
+			ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+		}
+
+		{
+			manifold.pointCount = 0;
+			b3SimplexCache cache = { 0 };
+			b3CollideHullAndCapsule( &manifold, B3_MAX_MANIFOLD_POINTS, &box.base, &capsuleX, SlideY( 0.75f + gap ), &cache );
+			ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+		}
+
+		{
+			manifold.pointCount = 0;
+			b3SATCache cache = { 0 };
+			b3CollideHulls( &manifold, B3_MAX_MANIFOLD_POINTS, &box.base, &box.base, SlideY( 1.0f + gap ), &cache );
+			ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+		}
+
+		{
+			manifold.pointCount = 0;
+			b3Sphere raised = { { 0.0f, 0.25f + gap, 0.0f }, 0.25f };
+			b3CollideTriangleAndSphere( &manifold, B3_MAX_MANIFOLD_POINTS, triangle, &raised );
+			ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+		}
+
+		{
+			manifold.pointCount = 0;
+			b3Capsule raised = capsuleX;
+			raised.center1.y = 0.25f + gap;
+			raised.center2.y = 0.25f + gap;
+			b3SimplexCache cache = { 0 };
+			b3CollideTriangleAndCapsule( &manifold, B3_MAX_MANIFOLD_POINTS, triangle, &raised, &cache );
+			ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+		}
+
+		{
+			manifold.pointCount = 0;
+			b3BoxHull raised = b3MakeTransformedBoxHull( 0.5f, 0.5f, 0.5f, SlideY( 0.5f + gap ) );
+			b3SATCache cache = { 0 };
+			b3CollideTriangleAndHull( &manifold, B3_MAX_MANIFOLD_POINTS, triangle[0], triangle[1], triangle[2], 0, &raised.base,
+									  &cache, true );
+			ENSURE( CheckSpeculativePoints( &manifold, gap ) == 0 );
+		}
+	}
+
+	// Beyond the speculative distance the closed form routines report nothing
+	float farGap = 1.5f * B3_SPECULATIVE_DISTANCE;
+
+	manifold.pointCount = 0;
+	b3CollideSpheres( &manifold, B3_MAX_MANIFOLD_POINTS, &bigSphere, &sphere, SlideY( 0.75f + farGap ) );
+	ENSURE( manifold.pointCount == 0 );
+
+	manifold.pointCount = 0;
+	b3CollideCapsuleAndSphere( &manifold, B3_MAX_MANIFOLD_POINTS, &capsuleX, &sphere, SlideY( 0.5f + farGap ) );
+	ENSURE( manifold.pointCount == 0 );
+
+	return 0;
+}
+
+// The library reports the point count it was built with. A mismatch against the manifold
+// this translation unit sees means the app and the library disagree on b3Manifold.
+static int MaxPointCountTest( void )
+{
+	b3Manifold manifold;
+	ENSURE( b3GetMaxManifoldPoints() == (int)( sizeof( manifold.points ) / sizeof( manifold.points[0] ) ) );
+
+	return 0;
+}
+
 int ManifoldTest( void )
 {
+	RUN_SUBTEST( MaxPointCountTest );
 	RUN_SUBTEST( CrossedEdgeTest );
 	RUN_SUBTEST( EdgeAxisScaleTest );
 	RUN_SUBTEST( EdgeCacheTest );
@@ -1134,8 +1388,11 @@ int ManifoldTest( void )
 	RUN_SUBTEST( HullCapsuleEdgeDeepTest );
 	RUN_SUBTEST( TriangleHullEdgeSweepTest );
 	RUN_SUBTEST( CapsuleTriangleEdgeDeepTest );
+	RUN_SUBTEST( CapsuleTriangleFaceDeepTest );
+	RUN_SUBTEST( HullCapsuleFaceDeepTest );
 	RUN_SUBTEST( SphereHullSeamTest );
 	RUN_SUBTEST( CapsuleHullSeamTest );
+	RUN_SUBTEST( SpeculativeMarginTest );
 
 	return 0;
 }

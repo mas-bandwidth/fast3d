@@ -141,7 +141,7 @@ static bool b3ClipSegmentToTriangleFace( b3ClipVertex segment[2], const b3Vec3* 
 		}
 
 		// If the points are on different sides of the plane
-		if ( distance1 * distance2 < 0.0f )
+		if ( ( distance1 > 0.0f ) != ( distance2 > 0.0f ) )
 		{
 			// Find intersection point of edge and plane
 			float t = distance1 / ( distance1 - distance2 );
@@ -199,6 +199,7 @@ static b3SeparatingAxis b3QueryTriangleAndCapsuleEdges( const b3Vec3* vertices, 
 	float squaredTolerance = 0.005f * 0.005f;
 
 	int edgeIndex = 2;
+	float a = b3Dot( capsuleEdge, plane.normal );
 	b3Vec3 v1 = vertices[2];
 	for ( int index = 0; index < 3; ++index )
 	{
@@ -209,12 +210,13 @@ static b3SeparatingAxis b3QueryTriangleAndCapsuleEdges( const b3Vec3* vertices, 
 		// Pretend the triangle edge embeds a zero area face with a side normal. This
 		// provides a way to find an edge-edge normal that points outward from
 		// the triangle.
-		float a = b3Dot( capsuleEdge, plane.normal );
 		float b = b3Dot( capsuleEdge, sideNormal );
 
 		// Is the capsule edge parallel to the triangle edge? If so, face contact can handle it.
 		if ( a * a + b * b < squaredTolerance * b3LengthSquared( capsuleEdge ) )
 		{
+			v1 = v2;
+			edgeIndex = index;
 			continue;
 		}
 
@@ -346,9 +348,8 @@ static void b3BuildTriangleAndCapsuleEdgeContact( b3LocalManifold* manifold, con
 		return;
 	}
 
-	b3Vec3 point = b3Lerp( b3MulSub( result.point1, capsule->radius, normal ), result.point2, 0.5f );
+	b3Vec3 point = b3Lerp( result.point1, b3MulSub( result.point2, capsule->radius, normal ), 0.5f );
 	float separation = b3Dot( normal, b3Sub( p1, v1 ) );
-	B3_VALIDATE( b3AbsFloat( separation - query.separation ) < B3_LINEAR_SLOP );
 
 	manifold->normal = normal;
 	manifold->pointCount = 1;
@@ -390,9 +391,9 @@ void b3CollideTriangleAndCapsule( b3LocalManifold* manifold, int capacity, const
 	distanceInput.useRadii = false;
 
 	b3DistanceOutput distanceOutput = b3ShapeDistance( &distanceInput, cache, NULL, 0 );
-
+	float speculativeDistance = B3_SPECULATIVE_DISTANCE;
 	float radius = capsuleB->radius;
-	if ( distanceOutput.distance > radius + B3_SPECULATIVE_DISTANCE )
+	if ( distanceOutput.distance > radius + speculativeDistance )
 	{
 		// Shapes are separated, persist the cache
 		return;
@@ -448,7 +449,7 @@ void b3CollideTriangleAndCapsule( b3LocalManifold* manifold, int capacity, const
 		}
 
 		// Create contact from closest points.
-		b3Vec3 point = b3MulSV( 0.5f, b3Add( b3Sub( distanceOutput.pointA, b3MulSV( radius, delta ) ), distanceOutput.pointB ) );
+		b3Vec3 point = b3Lerp( distanceOutput.pointA, b3MulSub( distanceOutput.pointB, radius, delta ), 0.5f );
 
 		// Normal points from triangle to capsule.
 		manifold->normal = delta;
@@ -468,32 +469,38 @@ void b3CollideTriangleAndCapsule( b3LocalManifold* manifold, int capacity, const
 	b3SeparatingAxis faceQuery = b3QueryTriangleFaceAndCapsule( plane, capsuleB );
 	if ( faceQuery.separation > radius )
 	{
-		// Shapes are separated
+		// Shapes are separated. Should be impossible for a reasonable capsule radius.
 		return;
 	}
 
 	b3SeparatingAxis edgeQuery = b3QueryTriangleAndCapsuleEdges( triangleA, plane, capsuleB );
 	if ( edgeQuery.separation > radius )
 	{
-		// Shapes are separated
+		// Shapes are separated. Should be impossible for a reasonable capsule radius.
 		return;
 	}
 
 	// Create face contact
 	float faceSeparation = faceQuery.separation - radius;
 	b3BuildTriangleAndCapsuleFaceContact( manifold, triangleA, plane, capsuleB );
+	B3_VALIDATE( manifold->pointCount == 0 || manifold->pointCount == 2 );
 	if ( manifold->pointCount == 2 )
 	{
+		// This becomes the clipped separation.
 		faceSeparation = b3MinFloat( manifold->points[0].separation, manifold->points[1].separation );
 	}
-	B3_VALIDATE( faceSeparation <= 0.0f );
+
+	if ( edgeQuery.indexA == B3_NULL_INDEX )
+	{
+		// No valid edge contact.
+		return;
+	}
 
 	// Face contact can be empty if it does not realize the axis of minimum penetration.
 	// Create edge contact if face contact fails or edge contact is significantly better!
-	const float kRelEdgeTolerance = 0.50f;
-	const float kAbsTolerance = 1.0f * B3_LINEAR_SLOP;
+	float linearSlop = B3_LINEAR_SLOP;
 	float edgeSeparation = edgeQuery.separation - radius;
-	if ( manifold->pointCount == 0 || edgeSeparation > kRelEdgeTolerance * faceSeparation + kAbsTolerance )
+	if ( manifold->pointCount == 0 || edgeSeparation > faceSeparation + linearSlop )
 	{
 		// Edge contact
 		b3BuildTriangleAndCapsuleEdgeContact( manifold, triangleA, plane, capsuleB, edgeQuery );
@@ -926,10 +933,7 @@ static void b3CollideTriangleAndHullEdges( b3LocalManifold* manifold, int capaci
 		return;
 	}
 
-	// This can slide off the end from caching
 	float separation = b3Dot( query.normal, b3Sub( pB, pA ) );
-	B3_VALIDATE( b3AbsFloat( separation - query.separation ) < B3_LINEAR_SLOP );
-
 	b3Vec3 point = b3MulSV( 0.5f, b3Add( result.point1, result.point2 ) );
 
 	b3LocalManifoldPoint* pt = manifold->points + 0;

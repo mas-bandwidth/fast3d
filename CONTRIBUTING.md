@@ -11,7 +11,7 @@ is not our policy here.
 fast3d is a test bed, not a library to ship. It exists to find out whether pointing
 [Claude Code](https://claude.com/claude-code) at a mature, carefully optimized physics
 engine turns up real speedups, and the answer so far is yes. Optimizations that hold up
-get ported back into Box3D, where they will be maintained and correct across platforms.
+may be offered to Box3D, where they would be maintained and correct across platforms.
 The [README](README.md) says do not use this library, and means it.
 
 So an optimization you find here is worth more upstream than it is here. If your change is
@@ -25,18 +25,20 @@ place to discuss it.
 
 ## What a good contribution looks like here
 
-Speed, measured. This fork trades cross-platform determinism for performance
-(`BOX3D_GO_FAST`, on by default), so the usual determinism constraint does not bind, but
-correctness does.
+Speed, measured, with determinism kept. fast3d must produce bit-identical results across
+platforms and compilers on its own determinism scenes (`test/test_determinism.c`), the same
+guarantee Box3D makes. fast3d may drift from Box3D's exact numbers for speed, but never
+from itself: a change that moves the pinned values has to move them identically on x86-64
+and arm64, and the pull request updates the pinned step and hash values in
+`test/test_determinism.c` with both measurements.
 
 - Bring numbers. Say what you measured, on what hardware, with what compiler and build
   type, and how many runs. `benchmark -t=4 -w=4 -r=2` is the shape the README uses. Note
   that the benchmark CLI takes equals-form flags only (`-w=4`, not `-w 4`); a
   space-separated flag is silently ignored, which quietly changes what you measured.
-- The full test suite has to pass. A speedup that changes results is a bug report, not an
-  optimization.
-- Say whether the win survives with `-DBOX3D_GO_FAST=OFF`. A win that only exists with
-  GO_FAST on is a different, smaller claim.
+- The full test suite has to pass, in Debug and in an optimized build.
+- No FMA contraction, reassociation or fast-math. The build pins `-ffp-contract=off`, and a
+  change that needs it lifted is out of scope.
 
 ## Opening a pull request
 
