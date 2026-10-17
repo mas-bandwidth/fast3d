@@ -10,6 +10,8 @@ set(BOX3D_TEST_FILES
 	test_collision.c
 	test_compound.c
 	test_container.c
+    test_core_math.c
+    core_math_harness.h
     test_determinism.c
     test_distance.c
     test_dynamic_tree.c
@@ -33,7 +35,17 @@ set(BOX3D_TEST_FILES
     test_world.c
 )
 
-add_executable(test ${BOX3D_TEST_FILES})
+# CORE-MATH rows: each row card adds one file under core_math/ and nothing else.
+# A present file defines B3_CORE_MATH_ROW_<STEM>=1 so test_core_math.c runs its subtest.
+file(GLOB B3_CORE_MATH_ROWS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/core_math/*.c)
+
+add_executable(test ${BOX3D_TEST_FILES} ${B3_CORE_MATH_ROWS})
+
+foreach(B3_CORE_MATH_ROW ${B3_CORE_MATH_ROWS})
+	get_filename_component(B3_CORE_MATH_STEM ${B3_CORE_MATH_ROW} NAME_WE)
+	string(TOUPPER ${B3_CORE_MATH_STEM} B3_CORE_MATH_STEM)
+	target_compile_definitions(test PRIVATE B3_CORE_MATH_ROW_${B3_CORE_MATH_STEM}=1)
+endforeach()
 
 set_target_properties(test PROPERTIES
     C_STANDARD 17
@@ -58,4 +70,4 @@ endif()
 
 target_link_libraries(test PRIVATE box3d shared)
 
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX "" FILES ${BOX3D_TEST_FILES})
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX "" FILES ${BOX3D_TEST_FILES} ${B3_CORE_MATH_ROWS})

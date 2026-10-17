@@ -1,0 +1,58 @@
+Reason: MSVC cl has no unsigned __int128, so rbig gets the same four products as u64 pairs
+(core_math_mul64), and cl rejects the constant 0.0f/0.0f (error C2124), so the NaN return for
+an infinite argument becomes x - x. CORE_MATH_NO_BUILTIN_ROUNDEVEN sends the --prove gcc build down
+the roundeven fallback cl already takes upstream. Each change is keyed to a macro only
+patches/core_math_compat.h defines, so gcc, clang, clang-cl and MinGW compile upstream unchanged.
+
+--- a/cosf.c
++++ b/cosf.c
+@@ -39,7 +39,7 @@
+ /* __builtin_roundeven was introduced in gcc 10:
+    https://gcc.gnu.org/gcc-10/changes.html,
+    and in clang 17 */
+-#if ((defined(__GNUC__) && __GNUC__ >= 10) || (defined(__clang__) && __clang_major__ >= 17)) && !defined(_MSC_VER) && (defined(__aarch64__) || defined(__x86_64__) || defined(__i386__))
++#if ((defined(__GNUC__) && __GNUC__ >= 10) || (defined(__clang__) && __clang_major__ >= 17)) && !defined(_MSC_VER) && !defined(CORE_MATH_NO_BUILTIN_ROUNDEVEN) && (defined(__aarch64__) || defined(__x86_64__) || defined(__i386__))
+ # define roundeven_finite(x) __builtin_roundeven (x)
+ #else
+ /* round x to nearest integer, breaking ties to even */
+@@ -77,7 +77,7 @@
+ typedef union {double f; uint64_t u;} b64u64_u;
+ #if (defined(__clang__) && __clang_major__ >= 14) || (defined(__GNUC__) && __GNUC__ >= 14 && __BITINT_MAXWIDTH__ && __BITINT_MAXWIDTH__ >= 128)
+ typedef unsigned _BitInt(128) u128;
+-#else
++#elif !defined(CORE_MATH_NO_INT128)
+ typedef unsigned __int128 u128;
+ #endif
+ typedef uint64_t u64;
+@@ -86,11 +86,19 @@
+   static const u64 ipi[] = {0xfe5163abdebbc562, 0xdb6295993c439041, 0xfc2757d1f534ddc0, 0xa2f9836e4e441529};
+   int e = (u>>23)&0xff, i;
+   u64 m = (u&(~0u>>9))|1<<23;
++#ifndef CORE_MATH_NO_INT128
+   u128 p0 = (u128)m*ipi[0];
+   u128 p1 = (u128)m*ipi[1]; p1 += p0>>64;
+   u128 p2 = (u128)m*ipi[2]; p2 += p1>>64;
+   u128 p3 = (u128)m*ipi[3]; p3 += p2>>64;
+   u64 p3h = p3>>64, p3l = p3, p2l = p2, p1l = p1;
++#else
++  /* the same products as (high, low) u64 pairs, the carry added by hand */
++  u64 p0h, p0l = core_math_mul64(m, ipi[0], &p0h); (void)p0l;
++  u64 p1h, p1l = core_math_mul64(m, ipi[1], &p1h); p1l += p0h; p1h += p1l < p0h;
++  u64 p2h, p2l = core_math_mul64(m, ipi[2], &p2h); p2l += p1h; p2h += p2l < p1h;
++  u64 p3h, p3l = core_math_mul64(m, ipi[3], &p3h); p3l += p2h; p3h += p3l < p2h;
++#endif
+   int64_t a;
+   int k = e-124, s = k-23;
+   /* in cr_cosf(), rbig() is called in the case 127+28 <= e < 0xff
+@@ -164,7 +172,11 @@
+ #ifdef CORE_MATH_SUPPORT_ERRNO
+     errno = EDOM;
+ #endif
++#ifndef CORE_MATH_NO_CONST_NAN
+     return 0.0f/0.0f; // to raise FE_INVALID
++#else
++    return x - x; // inf - inf, also raises FE_INVALID
++#endif
+   }
+   int ia;
+   double z = rbig(t.u, &ia);
