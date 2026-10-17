@@ -119,7 +119,34 @@ set(BOX3D_INCLUDE_FILES
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
-add_library(box3d ${BOX3D_SOURCE_FILES} ${BOX3D_INCLUDE_FILES})
+# CORE-MATH at the pin, the correctly rounded reference for float transcendentals
+# (docs/determinism-math.md). The files define cr_atan2f, cr_sinf and cr_cosf. They build as
+# an object library so their warnings are silenced on these three files only, and so MSVC
+# compiles them without the /W4 the library sets.
+set(BOX3D_CORE_MATH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../extern/core-math)
+add_library(box3d_core_math OBJECT
+	${BOX3D_CORE_MATH_DIR}/atan2f.c
+	${BOX3D_CORE_MATH_DIR}/sinf.c
+	${BOX3D_CORE_MATH_DIR}/cosf.c
+)
+set_target_properties(box3d_core_math PROPERTIES
+	C_STANDARD 17
+	C_STANDARD_REQUIRED YES
+	C_EXTENSIONS YES
+	POSITION_INDEPENDENT_CODE "${BUILD_SHARED_LIBS}"
+)
+if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+	# cl: the GCC builtins and the u64 pair product come from the compat header, see
+	# extern/core-math/NOTES.md
+	target_compile_options(box3d_core_math PRIVATE /w "/FI${BOX3D_CORE_MATH_DIR}/patches/core_math_compat.h")
+elseif (MSVC)
+	# clang-cl
+	target_compile_options(box3d_core_math PRIVATE /w)
+else()
+	target_compile_options(box3d_core_math PRIVATE -w)
+endif()
+
+add_library(box3d ${BOX3D_SOURCE_FILES} ${BOX3D_INCLUDE_FILES} $<TARGET_OBJECTS:box3d_core_math>)
 
 # target_link_libraries(box3d PRIVATE eastl)
 
