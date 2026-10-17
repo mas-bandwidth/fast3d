@@ -19,27 +19,37 @@
 // Double precision accumulates body positions in double, so the settle/sleep step and the
 // state hash differ from the float build. Both modes are internally deterministic.
 #if defined( BOX3D_DOUBLE_PRECISION )
-#define RAGDOLL_SLEEP_STEP 267
-#define RAGDOLL_HASH 0x01EB8FDB
-#define WAVE_PILE_SLEEP_STEP 333
-#define WAVE_PILE_HASH 0x80D5266B
+// 2026-10-17 cm-fast3d-atan2-sincos: 267 -> 283, 0x01EB8FDB -> 0x115659CF
+#define RAGDOLL_SLEEP_STEP 283
+#define RAGDOLL_HASH 0x115659CF
+// 2026-10-17 cm-fast3d-atan2-sincos: 333 -> 399, 0x80D5266B -> 0xDECE9264
+#define WAVE_PILE_SLEEP_STEP 399
+#define WAVE_PILE_HASH 0xDECE9264
 #define QUERY_SPAWN_SLEEP_STEP 242
-#define QUERY_SPAWN_HASH 0x90EE3E7C
+// 2026-10-17 cm-fast3d-atan2-sincos: 0x90EE3E7C -> 0x1B25404A
+#define QUERY_SPAWN_HASH 0x1B25404A
 #define QUERY_SPAWN_HIT_COUNT 59
-#define QUERY_SPAWN_QUERY_HASH 0x5B4429DC
-#define MESH_DROP_SLEEP_STEP 218
-#define MESH_DROP_HASH 0x10051259
+// 2026-10-17 cm-fast3d-atan2-sincos: 0x5B4429DC -> 0x90AE554C
+#define QUERY_SPAWN_QUERY_HASH 0x90AE554C
+// 2026-10-17 cm-fast3d-atan2-sincos: 218 -> 245, 0x10051259 -> 0xB7DC776C
+#define MESH_DROP_SLEEP_STEP 245
+#define MESH_DROP_HASH 0xB7DC776C
 #else
-#define RAGDOLL_SLEEP_STEP 265
-#define RAGDOLL_HASH 0xB98B3638
-#define WAVE_PILE_SLEEP_STEP 288
-#define WAVE_PILE_HASH 0xFC1CD2DC
+// 2026-10-17 cm-fast3d-atan2-sincos: 265 -> 274, 0xB98B3638 -> 0x5725C0E4 (correctly rounded atan2/sincos)
+#define RAGDOLL_SLEEP_STEP 274
+#define RAGDOLL_HASH 0x5725C0E4
+// 2026-10-17 cm-fast3d-atan2-sincos: 288 -> 342, 0xFC1CD2DC -> 0xEE8A9DD5
+#define WAVE_PILE_SLEEP_STEP 342
+#define WAVE_PILE_HASH 0xEE8A9DD5
 #define QUERY_SPAWN_SLEEP_STEP 242
-#define QUERY_SPAWN_HASH 0x58F47348
+// 2026-10-17 cm-fast3d-atan2-sincos: 0x58F47348 -> 0xFBB9EB89
+#define QUERY_SPAWN_HASH 0xFBB9EB89
 #define QUERY_SPAWN_HIT_COUNT 59
-#define QUERY_SPAWN_QUERY_HASH 0xE3271F3D
-#define MESH_DROP_SLEEP_STEP 218
-#define MESH_DROP_HASH 0x983F27EA
+// 2026-10-17 cm-fast3d-atan2-sincos: 0xE3271F3D -> 0x90AE554C
+#define QUERY_SPAWN_QUERY_HASH 0x90AE554C
+// 2026-10-17 cm-fast3d-atan2-sincos: 218 -> 245, 0x983F27EA -> 0x4D840426
+#define MESH_DROP_SLEEP_STEP 245
+#define MESH_DROP_HASH 0x4D840426
 #endif
 
 // The goldens above pin exact values for the default four point manifold. A build that
