@@ -185,14 +185,14 @@ B3_INLINE float b3LerpFloat( float a, float b, float alpha )
 	return ( 1.0f - alpha ) * a + alpha * b;
 }
 
-/// Compute an approximate arctangent in the range [-pi, pi]
-/// This is hand coded for cross-platform determinism. The atan2f
-/// function in the standard library is not cross-platform deterministic.
-///	Accurate to around 0.0023 degrees.
+/// Compute the arctangent in the range [-pi, pi].
+/// Correctly rounded (CORE-MATH at the pin in extern/core-math/NOTES.md) and
+/// cross-platform deterministic.
 B3_API float b3Atan2( float y, float x );
 
-/// Compute the cosine and sine of an angle in radians. Implemented
-/// for cross-platform determinism.
+/// Compute the cosine and sine of an angle in radians.
+/// Both outputs are correctly rounded (CORE-MATH at the pin in
+/// extern/core-math/NOTES.md) and cross-platform deterministic.
 B3_API b3CosSin b3ComputeCosSin( float radians );
 
 /// @deprecated 

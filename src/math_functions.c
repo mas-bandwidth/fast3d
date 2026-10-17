@@ -166,101 +166,20 @@ bool b3IsValidWorldTransform( b3WorldTransform t )
 	return b3IsValidPosition( t.p ) && b3IsValidQuat( t.q );
 }
 
-// https://stackoverflow.com/questions/46210708/atan2-approximation-with-11bits-in-mantissa-on-x86with-sse2-and-armwith-vfpv4
+// CORE-MATH at the pin (extern/core-math/NOTES.md): correctly rounded float transcendentals.
+extern float cr_atan2f( float y, float x );
+extern float cr_sinf( float x );
+extern float cr_cosf( float x );
+
 float b3Atan2( float y, float x )
 {
-	// Added check for (0,0) to match atan2f and avoid NaN
-	if ( x == 0.0f && y == 0.0f )
-	{
-		return 0.0f;
-	}
-
-	float ax = b3AbsFloat( x );
-	float ay = b3AbsFloat( y );
-	float mx = b3MaxFloat( ay, ax );
-	float mn = b3MinFloat( ay, ax );
-	float a = mn / mx;
-
-	// Minimax polynomial approximation to atan(a) on [0,1]
-	float s = a * a;
-	float c = s * a;
-	float q = s * s;
-	float r = 0.024840285f * q + 0.18681418f;
-	float t = -0.094097948f * q - 0.33213072f;
-	r = r * s + t;
-	r = r * c + a;
-
-	// Map to full circle
-	if ( ay > ax )
-	{
-		r = 1.57079637f - r;
-	}
-
-	if ( x < 0 )
-	{
-		r = 3.14159274f - r;
-	}
-
-	if ( y < 0 )
-	{
-		r = -r;
-	}
-
-	return r;
+	return cr_atan2f( y, x );
 }
 
-// Approximate cosine and sine for determinism. In my testing cosf and sinf produced
-// the same results on x64 and ARM using MSVC, GCC, and Clang. However, I don't trust
-// this result.
-// https://en.wikipedia.org/wiki/Bh%C4%81skara_I%27s_sine_approximation_formula
 b3CosSin b3ComputeCosSin( float radians )
 {
-#if 0
-	return {
-		cosf( radians ),
-		sinf( radians ),
-	};
-#else
-	float x = b3UnwindAngle( radians );
-	float pi2 = B3_PI * B3_PI;
-
-	// cosine needs angle in [-pi/2, pi/2]
-	float c;
-	if ( x < -0.5f * B3_PI )
-	{
-		float y = x + B3_PI;
-		float y2 = y * y;
-		c = -( pi2 - 4.0f * y2 ) / ( pi2 + y2 );
-	}
-	else if ( x > 0.5f * B3_PI )
-	{
-		float y = x - B3_PI;
-		float y2 = y * y;
-		c = -( pi2 - 4.0f * y2 ) / ( pi2 + y2 );
-	}
-	else
-	{
-		float y2 = x * x;
-		c = ( pi2 - 4.0f * y2 ) / ( pi2 + y2 );
-	}
-
-	// sine needs angle in [0, pi]
-	float s;
-	if ( x < 0.0f )
-	{
-		float y = x + B3_PI;
-		s = -16.0f * y * ( B3_PI - y ) / ( 5.0f * pi2 - 4.0f * y * ( B3_PI - y ) );
-	}
-	else
-	{
-		s = 16.0f * x * ( B3_PI - x ) / ( 5.0f * pi2 - 4.0f * x * ( B3_PI - x ) );
-	}
-
-	float mag = sqrtf( s * s + c * c );
-	float invMag = mag > 0.0f ? 1.0f / mag : 0.0f;
-	b3CosSin cs = { c * invMag, s * invMag };
+	b3CosSin cs = { cr_cosf( radians ), cr_sinf( radians ) };
 	return cs;
-#endif
 }
 
 b3Quat b3MakeQuatFromMatrix( const b3Matrix3* m )
